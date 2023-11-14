@@ -28,9 +28,9 @@ For an interested cohort, scSemiProfiler runs the following pipeline to generate
 * Python side-packages:   
 -- pytorch == 1.12.1  
 -- numpy == 1.19.2     
--- scanpy == 1.9.8
+-- scanpy == 1.9.8  
 -- scikit-learn == 1.1.2  
--- faiss >= 1.7.2
+-- faiss >= 1.7.2  
 -- scvi == 0.17.4  
 -- pytorch_lightning == 1.7.7
 
