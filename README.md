@@ -30,7 +30,7 @@ For an interested cohort, scSemiProfiler runs the following pipeline to generate
 -- numpy == 1.19.2     
 -- scanpy == 1.9.8  
 -- scikit-learn == 1.1.2  
--- faiss >= 1.7.2  
+-- faiss == 1.7.2  
 -- scvi == 0.17.4  
 -- pytorch_lightning == 1.7.7
 
