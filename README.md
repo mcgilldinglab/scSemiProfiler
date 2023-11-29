@@ -20,13 +20,13 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 
 
 ## Table of Contents
-- [Prerequisites](#prerequisites)
+- [Software](#software)
 - [Installation](#installation)
 - [Usage](#Usage)
 - [Results reproduction](#Results-reproduction)
 - [Credits](#Credits)
 
-## Prerequisites
+## Software
 * Python3.9+
 * Python side-packages:   
 -- scanpy >= 1.9.6  
