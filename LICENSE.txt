@@ -4,7 +4,9 @@ scSemiProfiler - Dual Licensing
 
 PART 1: Open Source License for Academic Use
 ------------------------------------------------------
-scSemiProfiler is released under the MIT License for academic and non-commercial use. This portion of the software is released as open source under the terms of the following license:
+scSemiProfiler is released under the MIT License for academic and non-commercial 
+use. This portion of the software is released as open source under the terms of 
+the following license:
 
 MIT License
 
@@ -32,6 +34,12 @@ SOFTWARE.
 
 PART 2: Commercial License
 ------------------------------------------------------
-For commercial use of scSemiProfiler, a commercial license is required. This includes any use of scSemiProfiler in a commercial entity or for commercial purposes, including but not limited to integration into commercial products, use in a commercial environment, or redistribution in a commercial context.If you are interested in using scSemiProfiler for commercial purposes, please contact us at jingtao.wang@mail.mcgill.ca for more information about obtaining a commercial license.
+For commercial use of scSemiProfiler, a commercial license is required. This 
+includes any use of scSemiProfiler in a commercial entity or for commercial 
+purposes, including but not limited to integration into commercial products, 
+use in a commercial environment, or redistribution in a commercial context.
+If you are interested in using scSemiProfiler for commercial purposes, please 
+contact us at jingtao.wang@mail.mcgill.ca for more information about obtaining 
+a commercial license.
 
 
