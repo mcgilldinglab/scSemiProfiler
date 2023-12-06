@@ -8,6 +8,7 @@ import numpy as np
 import gc
 import pandas as pd
 import timeit
+import scipy
 import warnings
 warnings.filterwarnings('ignore')
 import faiss
@@ -22,6 +23,145 @@ from matplotlib.pyplot import figure
 
 from torch.utils.data import Dataset
 import anndata
+
+
+def gen_tf_gene_table(genes, tf_list, dTD):
+    """
+
+    Adapted from:
+    Author: Jun Ding
+    Project: SCDIFF2
+    Ref: Ding, J., Aronow, B. J., Kaminski, N., Kitzmiller, J., Whitsett, J. A., & Bar-Joseph, Z.
+    (2018). Reconstructing differentiation networks and their regulation from time series
+    single-cell expression data. Genome research, 28(3), 383-395.
+
+    """
+    gene_names = [g.upper() for g in genes]
+    TF_names = [g.upper() for g in tf_list]
+    tf_gene_table = dict.fromkeys(tf_list)
+
+    for i, tf in enumerate(tf_list):
+        tf_gene_table[tf] = np.zeros(len(gene_names))
+        _genes = dTD[tf]
+
+        _existed_targets = list(set(_genes).intersection(gene_names))
+        _idx_targets = map(lambda x: gene_names.index(x), _existed_targets)
+
+        for _g in _idx_targets:
+            tf_gene_table[tf][_g] = 1
+
+    del gene_names
+    del TF_names
+    del _genes
+    del _existed_targets
+    del _idx_targets
+
+    gc.collect()
+
+    return tf_gene_table
+
+
+
+def getGeneSetMatrix(_name, genes_upper, gene_sets_path):
+    """
+
+    Adapted from:
+    Author: Jun Ding
+    Project: SCDIFF2
+    Ref: Ding, J., Aronow, B. J., Kaminski, N., Kitzmiller, J., Whitsett, J. A., & Bar-Joseph, Z.
+    (2018). Reconstructing differentiation networks and their regulation from time series
+    single-cell expression data. Genome research, 28(3), 383-395.
+
+    """
+    if _name[-3:] == 'gmt':
+        print(f"GMT file {_name} loading ... ")
+        filename = _name
+        filepath = os.path.join(gene_sets_path, f"{filename}")
+
+        with open(filepath) as genesets:
+            pathway2gene = {line.strip().split("\t")[0]: line.strip().split("\t")[2:]
+                            for line in genesets.readlines()}
+
+        print(len(pathway2gene))
+
+        gs = []
+        for k, v in pathway2gene.items():
+            gs += v
+
+        print(f"Number of genes in {_name} {len(set(gs).intersection(genes_upper))}")
+
+        pathway_list = pathway2gene.keys()
+        pathway_gene_table = gen_tf_gene_table(genes_upper, pathway_list, pathway2gene)
+        gene_set_matrix = np.array(list(pathway_gene_table.values()))
+        keys = pathway_gene_table.keys()
+
+        del pathway2gene
+        del gs
+        del pathway_list
+        del pathway_gene_table
+
+        gc.collect()
+
+
+    elif _name == 'TF-DNA':
+
+        # get TF-DNA dictionary
+        # TF->DNA
+        def getdTD(tfDNA):
+            dTD = {}
+            with open(tfDNA, 'r') as f:
+                tfRows = f.readlines()
+                tfRows = [item.strip().split() for item in tfRows]
+                for row in tfRows:
+                    itf = row[0].upper()
+                    itarget = row[1].upper()
+                    if itf not in dTD:
+                        dTD[itf] = [itarget]
+                    else:
+                        dTD[itf].append(itarget)
+
+            del tfRows
+            del itf
+            del itarget
+            gc.collect()
+
+            return dTD
+
+        from collections import defaultdict
+
+        def getdDT(dTD):
+            gene_tf_dict = defaultdict(lambda: [])
+            for key, val in dTD.items():
+                for v in val:
+                    gene_tf_dict[v.upper()] += [key.upper()]
+
+            return gene_tf_dict
+
+        tfDNA_file = os.path.join(gene_sets_path, f"Mouse_TF_targets.txt")
+        dTD = getdTD(tfDNA_file)
+        dDT = getdDT(dTD)
+
+        tf_list = list(sorted(dTD.keys()))
+        tf_list.remove('TF')
+
+        tf_gene_table = gen_tf_gene_table(genes_upper, tf_list, dTD)
+        gene_set_matrix = np.array(list(tf_gene_table.values()))
+        keys = tf_gene_table.keys()
+
+        del dTD
+        del dDT
+        del tf_list
+        del tf_gene_table
+
+        gc.collect()
+
+    else:
+        gene_set_matrix = None
+
+    return gene_set_matrix, keys
+
+
+
 
 class AnnDataset(Dataset):
     def __init__(self, filepath: str, label_name: str = None, second_filepath: str = None,
@@ -90,7 +230,7 @@ class AnnDataset(Dataset):
         else:
             return main
         
-def fast_cellgraph(adata,k,diagw):
+def fast_cellgraph(adata,k=15,diagw=1.0):
     adj = kneighbors_graph(np.array(adata.X), k, mode='connectivity', include_self=True)
     adj = adj.toarray()
     diag = np.array(np.identity(adj.shape[0]).astype('float32'))*diagw
@@ -104,6 +244,8 @@ def fast_cellgraph(adata,k,diagw):
     #remove self so that not in neighbors
     for i in range(adj.shape[0]):
         adj[i,i]=0
+        
+    adata.obsm['adj'] = adj
     adj = torch.from_numpy(adj.astype('float32'))#.type(torch.FloatTensor)
     neighboridx = np.where(adj!=0)
     xs = neighboridx[0]
@@ -142,30 +284,43 @@ def fast_cellgraph(adata,k,diagw):
     return adata,adj
 
 
-        
-def scprocess(singlecell,cellfilter,threshold,geneset,weight,k):
+
+    
+def scprocess(name,singlecell,normed,cellfilter,threshold,geneset,weight,k):
     
     print('Processing representative single-cell data')
     
     scdata = anndata.read_h5ad(singlecell)
     sids = np.unique(scdata.obs['sample_ids'])
     
-    print('Filtering cells')
     # cell filtering
     if cellfilter == 'yes':
+        print('Filtering cells')
         sc.pp.filter_cells(scdata, min_genes=200)
         scdata.var['mt'] = scdata.var_names.str.startswith('MT-')  # annotate the group of mitochondrial genes as 'mt'
         sc.pp.calculate_qc_metrics(scdata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
         scdata = scdata[scdata.obs.n_genes_by_counts < 2500, :]
         scdata = scdata[scdata.obs.pct_counts_mt < 5, :]
     
-    print('Removing background noise')
+    if normed == 'no':
+        print('Library size normalization.')
+        sc.pp.normalize_total(scdata, target_sum=1e4)    
+    
+    # convert to dense if sparse
+    if type(scdata.X) == scipy.sparse._csr.csr_matrix:
+        X = np.array(scdata.X.todense())
+        tempdata = anndata.AnnData(X)
+        tempdata.obs = scdata.obs
+        tempdata.var = scdata.var
+        scdata = tempdata
+    
+    
     # norm remove noise
-    sc.pp.normalize_total(scdata, target_sum=1e4)        
     if float(threshold) > 0:
-        X = scdata.X
+        print('Removing background noise')
+        X = np.array(scdata.X)
         cutoff = 1e4*threshold
-        X = X*[X>cutoff]
+        X = X * np.array(X>cutoff)
         nscdata = anndata.AnnData(X)
         nscdata.obs = scdata.obs
         nscdata.var = scdata.var
@@ -175,10 +330,10 @@ def scprocess(singlecell,cellfilter,threshold,geneset,weight,k):
     
     
     # store singlecell data, geneset score
-    if (os.path.isdir('sample_sc')) == False:
-        os.sys('mkdir sample_sc')
-    if (os.path.isdir('geneset_scores')) == False:
-        os.sys('mkdir geneset_scores')
+    if (os.path.isdir(name + '/sample_sc')) == False:
+        os.system('mkdir ' + name + '/sample_sc')
+    if (os.path.isdir(name + '/geneset_scores')) == False:
+        os.system('mkdir ' + name + '/geneset_scores')
         
     if geneset != 'none':
         prior_name = "c2.cp.v7.4.symbols.gmt" # "c5.go.bp.v7.4.symbols.gmt+c2.cp.v7.4.symbols.gmt+TF-DNA"
@@ -188,17 +343,13 @@ def scprocess(singlecell,cellfilter,threshold,geneset,weight,k):
     print('Computing geneset scores')
     zps=[]
     for sid in sids:
-        adata = scdata[scdata.obs['sample_ids'] == 'sid']
+        adata = scdata[scdata.obs['sample_ids'] == sid]
         X = adata.X
 
         gene_sets_path = "genesets/"
-        expression_only = AnnDataset(data_filepath, label_name=label_name, variable_gene_name=variable_gene_name)
-        exp_variable_genes = expression_only.exp_variable_genes
-        variable_genes_names = expression_only.variable_genes_names
-        genes_upper = expression_only.genes_upper
-        clusters_true = expression_only.clusters_true
-        N = expression_only.N
-        G = expression_only.G
+        genes_upper = [g.upper() for g in list(adata.var.index)]
+        N = adata.X.shape[0]
+        G = len(genes_upper)
         gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
         
         zp = X.dot(np.array(gene_set_matrix).T)
@@ -206,21 +357,21 @@ def scprocess(singlecell,cellfilter,threshold,geneset,weight,k):
         den = (np.array(gene_set_matrix.sum(axis=1))+eps)
         zp = (zp+eps)/den
         zp = zp - eps/den
-        np.save('geneset_scores/'+pid,zp)
+        np.save(name + '/geneset_scores/' + sid,zp)
         zps.append(zp)
     
     if 'hvset.npy' not in os.listdir():
-        zps=np.array(zps)
+        zps=np.concatenate(zps,axis=0)
         zdata = anndata.AnnData(zps)
         sc.pp.log1p(zdata)
         sc.pp.highly_variable_genes(zdata)
         hvset = zdata.var.highly_variable
-        np.save('hvset.npy',hvset)
+        np.save(name + '/hvset.npy',hvset)
 
     
         
-    # select highly variable genes
-    hvgenes = np.load('hvgenes.npy')
+    # select highly variable genes (genes in preprocessed bulk data)
+    hvgenes = np.load(name + '/hvgenes.npy', allow_pickle = True)
     hvmask = []
     for i in scdata.var.index:
         if i in hvgenes:
@@ -229,19 +380,30 @@ def scprocess(singlecell,cellfilter,threshold,geneset,weight,k):
             hvmask.append(False)
     hvmask = np.array(hvmask)
     scdata = scdata[:,hvmask]
-    
+    np.save(name + '/hvmask.npy',hvmask)
     
 
+    print('Augmenting and saving single-cell data.')
     for sid in sids:
-        adata = scdata[scdata.obs['sample_ids'] == 'sid']
+        adata = scdata[scdata.obs['sample_ids'] == sid]
         
-        #gcn
+        # gcn
         adata.obs['cellidx']=range(len(adata.obs))
-        adata,adj = fast_cellgraph(adata,k,diagw)
-
-        variances = (adata.X.var(dim=0))
+        adata,adj = fast_cellgraph(adata,k=k,diagw=1.0)
         
-        adata.write('sample_sc/' + sid + '.h5ad')
+        
+        # # importance weight
+        sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
+        setmask = np.load(name + '/hvset.npy')
+        sample_geneset = sample_geneset[:,setmask]
+        sample_geneset = sample_geneset.astype('float32')
+        
+        features = np.concatenate([adata.X,sample_geneset],1)
+        
+        variances = np.var(features,axis=0)
+        adata.uns['feature_var'] = variances
+        
+        adata.write(name + '/sample_sc/' + sid + '.h5ad')
     
     print('Finished processing representative single-cell data')
     return 
@@ -257,6 +419,10 @@ def main():
     
     required.add_argument('--singlecell',required=True,help="Input representatives' single-cell data as a h5ad file. Sample IDs should be stored in obs.['sample_ids']. Cell IDs should be stored in obs.index. Gene symbols should be stored in var.index. Values should either be raw read counts or normalized expression.")
     
+    required.add_argument('--name',required=True, help="Project name.")
+    
+    optional.add_argument('--normed',required=False, default='no', help="Whether the library size normalization has already been done (Default: no)") ###
+    
     
     optional.add_argument('--cellfilter',required=False, default='yes', help="Whether to perform cell filtering: 'yes' or 'no'. (Default: yes)")
     optional.add_argument('--threshold',required=False, default='1e-3', help="The threshold for removing extremely low expressed background noise, as a proportion of the library size. (Default: 1e-3)")
@@ -266,13 +432,15 @@ def main():
     
     args = parser.parse_args()
     singlecell = args.singlecell
+    normed = args.normed
+    name = args.name
     cellfilter = args.cellfilter
     threshold = args.threshold
     geneset = args.geneset
     weight = args.weight
     k = args.k
     
-    scprocess(singlecell,cellfilter,threshold,geneset,weight,k)
+    scprocess(name,singlecell,normed,cellfilter,threshold,geneset,weight,k)
 
 if __name__=="__main__":
     main()

@@ -33,6 +33,7 @@ from scvi.model.base import  UnsupervisedTrainingMixin,ArchesMixin, BaseModelCla
 from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
 #from scvi.train._metrics import ElboMetric
 from scvi.train import  TrainingPlan, TrainRunner#, AdversarialTrainingPlan TrainingPlan,
+
 from scvi.dataloaders import DataSplitter
 from scvi.utils import setup_anndata_dsp
 from typing import Callable, Iterable, Optional
@@ -50,7 +51,7 @@ from scvi.model._utils import _init_library_size
 from scvi.module import VAE,Classifier
 logger = logging.getLogger(__name__)
 
-
+from scvi.utils._docstrings import devices_dsp
 
 import jax
 import jax.numpy as jnp
@@ -274,29 +275,8 @@ class myEncoder(nn.Module):
         device = x.device 
         b = x.shape[0]
         
-        
-        #neighborx = neighborx.to(device)
         neighborx = neighborx.reshape((b,-1))
         
-        # Parameters for latent distribution
-        '''print()
-        print('self.n_input',self.n_input)
-        print('neighborx')
-        print(neighborx.device)
-        print(neighborx.shape)
-        print(neighborx.dtype)
-        #print('catlist')
-        #print(*cat_list)
-        #print(cat_list)
-        print('x')
-        print(x.shape)
-        print(x.dtype)
-        print(x.device)
-        print(x)
-        print(1)
-        print(neighborx)
-        print(x.shape)'''
-
 
         g = x[:,-self.geneset_len:]
         g = self.g_encoder(g)
@@ -385,8 +365,6 @@ class myDecoderSCVI(nn.Module):
         
         px_r = self.px_r_decoder(px) if dispersion == "gene-cell" else None
         return px_scale, px_r, px_rate, px_dropout, g
-
-
 
 
 
@@ -626,7 +604,7 @@ class myVAE(BaseModuleClass):
             glibrary = torch.log(x_[:,genelen:].sum(1)).unsqueeze(1)
         if self.log_variational:
             x_ = torch.log(1 + x_)
-            neighborx = torch.log(1 + neighborx)
+            #neighborx = torch.log(1 + neighborx)
             awe=1+1
 
         encoder_input = x_
@@ -707,6 +685,7 @@ class myVAE(BaseModuleClass):
 
         qz_m = inference_outputs["qz_m"]
         qz_v = inference_outputs["qz_v"]
+        px_scale = generative_outputs["px_scale"]
         px_rate = generative_outputs["px_rate"]
         px_r = generative_outputs["px_r"]
         px_dropout = generative_outputs["px_dropout"]
@@ -715,12 +694,17 @@ class myVAE(BaseModuleClass):
         scale = torch.ones_like(qz_v)
 
         kl_divergence_z = kl(Normal(qz_m, qz_v.sqrt()), Normal(mean, scale)).sum(dim=1)
-
-        kl_divergence_l = 0.0
+        
+        #kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(
+        #    dim=-1
+        #)
+        
+        
+        kl_divergence_l = torch.tensor(0.0, device=x.device)
         variances = self.variances
         markermask = self.markermask
         bulk = self.bulk
-        reconst_loss, bulk_loss = self.get_reconstruction_loss(x, px_rate, px_r, px_dropout,\
+        reconst_loss, bulk_loss = self.get_reconstruction_loss(x, px_scale, px_rate, px_r, px_dropout,\
                                                     variances,markermask,bulk)
         kl_local_for_warmup = kl_divergence_z
         kl_local_no_warmup = kl_divergence_l
@@ -732,17 +716,19 @@ class myVAE(BaseModuleClass):
         kl_local = dict(
             kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
         )
-        kl_global = torch.tensor(0.0)
+        kl_global = torch.tensor(0.0, device=x.device)
         
         
-        #print(bulk)
-        #print(type(bulk))
-        if (type(bulk) == type(None)):
-            #print(0)
-            return LossOutput(loss, reconst_loss, kl_local,kl_global)
-        else:
-            return LossOutput(loss, reconst_loss, kl_local,bulk_loss)# kl_global)
 
+        if (type(bulk) == type(None)):
+
+            return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=kl_global)
+
+        else:
+            return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=bulk_loss)
+            #return LossOutput(loss, reconst_loss, kl_local,bulk_loss)# kl_global)
+
+        
     @torch.no_grad()
     def nb_sample(
         self,
@@ -769,55 +755,8 @@ class myVAE(BaseModuleClass):
         mask = (mdist.mean>bound)
         exprs = dist.mean  # * mask
         
-        return exprs.cpu(), mask
-        
+        return exprs.cpu(), mask  
 
-    @torch.no_grad()
-    def stoch_sample(
-        self,
-        tensors,
-        n_samples=1,
-        library_size=1,
-        bound=0.0,
-    ) -> np.ndarray:
-
-        inference_kwargs = dict(n_samples=n_samples,bound=bound)
-        inference_outputs, generative_outputs, = self.forward(
-            tensors,
-            inference_kwargs=inference_kwargs,
-            compute_loss=False,
-        )
-
-        px_r = generative_outputs["px_r"]
-        px_rate = generative_outputs["px_rate"]
-        px_dropout = generative_outputs["px_dropout"]
-
-        if self.gene_likelihood == "poisson":
-            l_train = px_rate
-            l_train = torch.clamp(l_train, max=1e8)
-            dist = torch.distributions.Poisson(
-                l_train
-            )  # Shape : (n_samples, n_cells_batch, n_genes)
-        elif self.gene_likelihood == "nb":
-            dist = NegativeBinomial(mu=px_rate, theta=px_r)
-        elif self.gene_likelihood == "zinb":
-            dist = ZeroInflatedNegativeBinomial(
-                mu=px_rate, theta=px_r, zi_logits=px_dropout
-            )
-        else:
-            raise ValueError(
-                "{} reconstruction error not handled right now".format(
-                    self.module.gene_likelihood
-                )
-            )
-        if n_samples > 1:
-            exprs = dist.sample().permute(
-                [1, 2, 0]
-            )  # Shape : (n_cells_batch, n_genes, n_samples)
-        else:
-            exprs = dist.sample()
-
-        return exprs.cpu()
         
     @torch.no_grad()
     def sample(
@@ -838,6 +777,7 @@ class myVAE(BaseModuleClass):
         px_r = generative_outputs["px_r"]
         px_rate = generative_outputs["px_rate"]
         px_dropout = generative_outputs["px_dropout"]
+        px_scale = generative_outputs["px_scale"]
 
         if self.gene_likelihood == "poisson":
             l_train = px_rate
@@ -849,7 +789,7 @@ class myVAE(BaseModuleClass):
             dist = NegativeBinomial(mu=px_rate, theta=px_r)
         elif self.gene_likelihood == "zinb":
             dist = ZeroInflatedNegativeBinomial(
-                mu=px_rate, theta=px_r, zi_logits=px_dropout
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
             )
         else:
             raise ValueError(
@@ -867,26 +807,22 @@ class myVAE(BaseModuleClass):
         return exprs.cpu()
 
 
-    def get_reconstruction_loss(self, x, px_rate, px_r, px_dropout, variances, markermask, bulk) -> torch.Tensor:
+    def get_reconstruction_loss(self, x, px_scale,px_rate, px_r, px_dropout, variances, markermask, bulk) -> torch.Tensor:
         if type(variances) != type(None):
             normv = variances
             ##########markermask = markermask
             vs,idx=normv.sort()
-            threshold =  vs[5128//2] #normv.mean()
-            #threshold2 =  vs[3540]
-            #normv = torch.tensor((normv>normv.mean())) 
+            threshold =  vs[x.shape[1]//2] #normv.mean()
             normv = torch.tensor((normv>threshold)) 
-            #msk = torch.tensor((normv>threshold2)) 
-            normv = 0.5*normv + 1
-            #normv = torch.ones
-            ####normv = normv + markermask*0.5
+            normv = 0.2*normv + 1
             normv = torch.tensor(normv)
         
         if self.gene_likelihood == "zinb":
-            reconst_loss =    ZeroInflatedNegativeBinomial(
-                    mu=px_rate, theta=px_r, zi_logits=px_dropout
+            reconst_loss =   ZeroInflatedNegativeBinomial(
+                    mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 ).log_prob(x)
-            #reconst_loss *= normv
+            normv = normv.reshape((1,-1))
+            #reconst_loss = reconst_loss*normv
             reconst_loss = -reconst_loss.sum(dim=-1)
             
         elif self.gene_likelihood == "nb":
@@ -899,7 +835,7 @@ class myVAE(BaseModuleClass):
         
         if type(bulk)!= type(None):
             predicted_batch_mean = ZeroInflatedNegativeBinomial(
-                    mu=px_rate, theta=px_r, zi_logits=px_dropout
+                    mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 ).mean
             
             
@@ -1077,9 +1013,10 @@ class AdversarialTrainingPlan(TrainingPlan):
         self.lr2=lr2
         self.kappa = kappa
         self.adversarial_classifier = adversarial_classifier
-        
         self.scale_adversarial_loss = scale_adversarial_loss
         self.clip = clip
+        self.automatic_optimization = False
+        
         
     def loss_adversarial_classifier(self, y_hat, y):
         return F.binary_cross_entropy(y_hat, y)
@@ -1132,8 +1069,78 @@ class AdversarialTrainingPlan(TrainingPlan):
         #        optimizer, gradient_clip_val=gradient_clip_val * 2, gradient_clip_algorithm=gradient_clip_algorithm
         #    )     
 
+    def training_step(self, batch, batch_idx):
+        """Training step for adversarial training."""
+        if "kl_weight" in self.loss_kwargs:
+            self.loss_kwargs.update({"kl_weight": self.kl_weight})
+        kappa = (
+            1 - self.kl_weight
+            if self.scale_adversarial_loss == "auto"
+            else self.scale_adversarial_loss
+        )
+        batch_tensor = batch[REGISTRY_KEYS.BATCH_KEY]
 
-    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        opts = self.optimizers()
+        if not isinstance(opts, list):
+            opt1 = opts
+            opt2 = None
+        else:
+            opt1, opt2 = opts
+
+        inference_outputs, generative_outputs, scvi_loss = self.forward(
+            batch, loss_kwargs=self.loss_kwargs
+        )
+  
+        loss = scvi_loss.loss
+        # fool classifier if doing adversarial training
+        if kappa > 0 and self.adversarial_classifier is not False:
+
+            px_scale = generative_outputs['px_scale']
+            px_r = generative_outputs['px_r']
+            px_rate = generative_outputs['px_rate']
+            px_dropout = generative_outputs['px_dropout']
+
+            dist = ZeroInflatedNegativeBinomial(
+            mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+            )
+            xh = dist.mean
+
+            valid = torch.ones(xh.size(0), 1)
+            valid = valid.type_as(xh)
+            fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
+            loss = loss + fool_loss 
+
+        self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+        self.log("fool_loss", fool_loss, on_epoch=True)
+        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
+        opt1.zero_grad()
+        self.manual_backward(loss)
+        opt1.step()
+
+        # train adversarial classifier
+        # this condition will not be met unless self.adversarial_classifier is not False
+        if opt2 is not None:
+
+            xh,__ = self.module.nb_sample(batch)
+            xh = xh.to(self.module.device)
+            x = batch[_CONSTANTS.X_KEY]
+            
+            valid = torch.ones(x.size(0), 1)
+            valid = valid.type_as(x)
+            fake = torch.zeros(x.size(0), 1)
+            fake = fake.type_as(x)
+
+            fake_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), fake)
+            true_loss = self.loss_adversarial_classifier(self.adversarial_classifier(x), valid)
+                                                             
+            loss = (fake_loss+true_loss)/2
+            opt2.zero_grad()
+            self.manual_backward(loss)
+            opt2.step()
+
+        
+
+    '''def training_step(self, batch, batch_idx, optimizer_idx=0):
         if "kl_weight" in self.loss_kwargs:
             self.loss_kwargs.update({"kl_weight": self.kl_weight})
         kappa = self.kappa #4040 * 0.1
@@ -1157,7 +1164,7 @@ class AdversarialTrainingPlan(TrainingPlan):
                 
                 
                 dist = ZeroInflatedNegativeBinomial(
-                mu=px_rate, theta=px_r, zi_logits=px_dropout
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 )
                 xh = dist.mean
 
@@ -1190,7 +1197,6 @@ class AdversarialTrainingPlan(TrainingPlan):
             fake = torch.zeros(x.size(0), 1)
             fake = fake.type_as(x)
 
-            
             fake_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), fake)
             true_loss = self.loss_adversarial_classifier(self.adversarial_classifier(x), valid)
                                                              
@@ -1200,7 +1206,7 @@ class AdversarialTrainingPlan(TrainingPlan):
             self.log("gan_true_loss", true_loss, on_epoch=True)
             self.log("gan_fake_loss", fake_loss, on_epoch=True)
             
-            return loss
+            return loss'''
 
         
     def configure_optimizers(self):
@@ -1332,50 +1338,70 @@ class fastgenerator(
         self.init_params_ = self._get_init_params(locals())
         self.clip = clip
         
+        
+    #@devices_dsp.dedent
     def train(
         self,
         max_epochs: Optional[int] = None,
         use_gpu: Optional[Union[str, int, bool]] = None,
+        accelerator: str = "auto",
         train_size: float = 1.0,
+        devices: Union[int, List[int], str] = "auto",
         validation_size: Optional[float] = None,
+        shuffle_set_split: bool = True,
         batch_size: int = 128,
         early_stopping: bool = False,
         plan_kwargs: Optional[dict] = None,
         **trainer_kwargs,
     ):
-    
+
+
         
+
         if max_epochs is None:
             n_cells = self.adata.n_obs
             max_epochs = np.min([round((20000 / n_cells) * 400), 400])
 
-        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
-
+        #plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
+        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
+        
         data_splitter = DataSplitter(
             self.adata_manager,
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
         )
+        
+
+        
+        
         training_plan = AdversarialTrainingPlan(self.module, 
                                                 adversarial_classifier=self.adversarial_classifier  ,
                                                 clip=self.clip
                                                 , **plan_kwargs)
+        
+        #training_plan = TrainingPlan(self.module, **plan_kwargs)
+        
         self.training_plan = training_plan
         
         es = "early_stopping"
         trainer_kwargs[es] = (
             early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
         )
+        
+                
+        #devices=devices,
         runner = TrainRunner(
             self,
             training_plan=training_plan,
             data_splitter=data_splitter,
+            accelerator=accelerator,
             max_epochs=max_epochs,
             use_gpu=use_gpu,
+            devices=devices,
             **trainer_kwargs,
         )
+        
         return runner()
     
     @classmethod

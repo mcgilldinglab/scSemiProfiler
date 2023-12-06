@@ -8,48 +8,48 @@ import anndata
 from anndata import AnnData
 import scanpy as sc
 from sklearn.neighbors import kneighbors_graph
-
+import gc
 from fast_generator import *
 
 
-def setdata(pid,tgtpid=None,device='cuda:0',k=15,diagw=1.0):
-    #adata = anndata.read_h5ad('COVID_HV_GT/'+pid+'.h5ad')
-    adata = anndata.read_h5ad('sample_sc/'+pid+'.h5ad') ###
+def setdata(name,sid,device='cuda:0',k=15,diagw=1.0):
+    adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
     
-    #(2) geneset
-    adata,geneset_len = get_geneset(adata,pid)
+    # load geneset
+    sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
+    setmask = np.load(name + '/hvset.npy')
+    sample_geneset = sample_geneset[:,setmask]
+    sample_geneset = sample_geneset.astype('float32')
+    geneset_len = sample_geneset.shape[1]
     
-    #(3) variances
-    X=torch.tensor(adata.X)
-    variances = (X.var(dim=0)).to(device)
-    
-    #(4) bulk
-    bulk = np.array(adata.X.mean(axis=0)).reshape((-1))
-    fastgenerator.setup_anndata(adata)
-
-    return adata,adj,variances,bulk,geneset_len
-
-
-def get_geneset(adata,pid):
-    #geneset = np.load('COVID_geneset/'+pid+'.npy')
-    geneset = np.load('geneset_scores/'+pid+'.npy')
-    setmask = np.load('hvset.npy')
-    geneset = geneset[:,setmask]
-    
-    features = np.concatenate([adata.X,geneset],1)
-    bdata = AnnData(features,dtype='float32')
+    features = np.concatenate([adata.X,sample_geneset],1)
+    bdata = anndata.AnnData(features,dtype='float32')
     bdata.obs = adata.obs
     bdata.obsm = adata.obsm
-    geneset_len = geneset.shape[1]
+    bdata.uns = adata.uns
     adata = bdata.copy()
     
-    return adata,geneset_len
+    # adj for cell graph
+    adj = adata.obsm['adj']
+    adj = torch.from_numpy(adj.astype('float32'))
+    
+    # variances
+    variances = torch.tensor(adata.uns['feature_var'])
+    variances = variances.to(device)
+    
+    #pseudobulk
+    pseudobulk = np.array(adata.X.mean(axis=0)).reshape((-1))
+    fastgenerator.setup_anndata(adata)
 
-def fastrecon(pid,tgtpid=None,device='cuda:0',k=15,diagw=1.0,vaesteps=100,gansteps=100,lr=1e-3,save=True,path=None):
+    return adata,adj,variances,pseudobulk,geneset_len
+
+
+
+
+def fastrecon(name, sid, device='cuda:0',k=15,diagw=1.0,vaesteps=100,gansteps=100,lr=1e-3,save=True,path=None):
     
     #set data
-    adata,adj,variances,bulk,geneset_len = setdata(pid,tgtpid,device,k,diagw,bulksource=-1)
-    
+    adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
     # train
     model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
     steps=3
@@ -62,16 +62,17 @@ def fastrecon(pid,tgtpid=None,device='cuda:0',k=15,diagw=1.0,vaesteps=100,ganste
     # save model
     if save == True:
         if path == None:
-            if (os.path.isdir('models')) == False:
-                os.sys('mkdir models')
-            path = 'models/fast_reconst1_'+pid
+            if (os.path.isdir(name + '/models')) == False:
+                os.system('mkdir '+ name + '/models')
+            path = name + '/models/fast_reconst1_'+sid
         torch.save(model.module.state_dict(), path)
-    
+        
     return model
 
+
 # reconst stage 2
-def reconst_pretrain2(pid,premodel,device='cuda:0',k=15,diagw=1.0,vaesteps=50,gansteps=50,lr=1e-4,save=True,path=None):
-    adata,adj,variances,bulk,geneset_len = setdata(pid,None,device,k,diagw,bulksource=0)
+def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaesteps=50,gansteps=50,lr=1e-4,save=True,path=None):
+    adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
     
     #(4) bulk
     bulk = (np.array(adata.X)).mean(axis=0)
@@ -85,8 +86,7 @@ def reconst_pretrain2(pid,premodel,device='cuda:0',k=15,diagw=1.0,vaesteps=50,ga
                 power=2,corrbulkweight=0,meanbias=0)
     
     if type(premodel) == type(None):
-        1+1
-        #model.module.load_state_dict(torch.load('saved_models/fastreconst2_'+pid))
+        pass
     else:
         model.module.load_state_dict(premodel.module.state_dict())
     
@@ -99,7 +99,7 @@ def reconst_pretrain2(pid,premodel,device='cuda:0',k=15,diagw=1.0,vaesteps=50,ga
     
     if save == True:
         if path == None:
-            path = 'models/fastreconst2_'+pid
+            path = name + '/models/fastreconst2_' + sid
         torch.save(model.module.state_dict(), path)
         
     return model
@@ -109,7 +109,7 @@ pp=8
 
 dis = 1 #0.2
 
-def unisemi0(adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model0 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight =1*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
@@ -121,56 +121,56 @@ def unisemi0(adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,pre
     lr = adata.X.shape[0] / (4e3) * 2e-4
     lr = 2e-4 * dis
     model0.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model0.module.state_dict(), 'tmp/model0')
+    torch.save(model0.module.state_dict(), name+'/tmp/model0')
     return model0.history
 
 
-def unisemi1(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model1 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 4*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
-    model1.module.load_state_dict(torch.load('tmp/model0'))
+    model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
     lr = adata.X.shape[0] / (4e3) * 2e-4
     lr = 2e-4 * dis
     model1.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model1.module.state_dict(), 'tmp/model1')
+    torch.save(model1.module.state_dict(), name+'/tmp/model1')
     return model1.history
 
-def unisemi2(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model2 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 16*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
-    model2.module.load_state_dict(torch.load('tmp/model1'))
+    model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
     lr = adata.X.shape[0] / (4e3) * 2e-4
     lr = 2e-4 * dis
     model2.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model2.module.state_dict(), 'tmp/model2')
+    torch.save(model2.module.state_dict(), name+'/tmp/model2')
     return model2.history
 
-def unisemi3(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model3 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 64*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
-    model3.module.load_state_dict(torch.load('tmp/model2'))
+    model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
     lr = adata.X.shape[0] / (4e3) * 2e-4
     lr = 2e-4 * dis
     model3.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model3.module.state_dict(), 'tmp/model3')
+    torch.save(model3.module.state_dict(), name+'/tmp/model3')
     return model3.history
 
-def unisemi4(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model4 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 128*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
-    model4.module.load_state_dict(torch.load('tmp/model3'))
+    model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
     lr = adata.X.shape[0] / (4e3) * 2e-4
     lr = 2e-4 * dis
     model4.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model4.module.state_dict(), 'tmp/model4')
+    torch.save(model4.module.state_dict(), name+'/tmp/model4')
     return model4.history
 
 def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
@@ -178,45 +178,47 @@ def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
-    model.module.load_state_dict(torch.load('tmp/model4'))
+    model.module.load_state_dict(torch.load(name+'/tmp/model4'))
     lr = adata.X.shape[0] / (4e3) * 4e-4
     lr = 2e-4 * dis
     model.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model.module.state_dict(), 'tmp/model')
+    torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
 
-def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
-    adata,adj,variances,bulk,geneset_len = setdata(reprepid,tgtpid,device,k,diagw)
-    #adata.X = (adata.X.todense())
+def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
+    sids = []
+    f = open(name + '/sids.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
+    
+    adata,adj,variances,reprepseudobulk,geneset_len = setdata(name,sids[reprepid],device=device,k=k,diagw=diagw)
     
     varainces = None
     
     maxexpr = adata.X.max()
     upperbounds = [maxexpr/2, maxexpr/4, maxexpr/8, maxexpr/(8*np.sqrt(2)),maxexpr/16, maxexpr/32,maxexpr/64]     
-       
-    hvmask = np.load('hvmask.npy')
-    #(5) tgt bulk
-    #tgtdata = anndata.read_h5ad('COVID_HV_GT/'+tgtpid+'.h5ad')
-    tgtdata = anndata.read_h5ad('sample_sc/'+tgtpid+'.h5ad')
-    tgtdata.X = tgtdata.X.todense()
-
     
-    tgtbulk = np.array(tgtdata.X)[:,hvmask]
-    tgtbulk = tgtbulk.mean(axis=0)
+    genelen = len(np.load(name+'/hvgenes.npy',allow_pickle=True))
+    
+    #(5) tgt bulk
+    bulkdata = anndata.read_h5ad(name + '/processed_bulkdata.h5ad')
+    tgtbulk = np.exp(bulkdata.X[tgtpid]) - 1
     tgtbulk = np.array(tgtbulk).reshape((1,-1))
     bulk = adata.X.mean(axis=0)
     bulk = np.array(bulk).reshape((1,-1))
     bulk[:,:tgtbulk.shape[1]] = tgtbulk
     bulk = torch.tensor(bulk).to(device)
     
-    batch_size=np.min([adata.X.shape[0],60000])
+    batch_size=int(np.min([adata.X.shape[0],9000]))
     
     
     #(6) semiprofiling
     fastgenerator.setup_anndata(adata)
 
     
-    hist = unisemi0(adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
     histdic={}
     histdic['total0'] = hist['train_loss_epoch']
     histdic['bulk0'] = hist['kl_global_train']
@@ -225,14 +227,14 @@ def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
     torch.cuda.empty_cache() 
     #import time
     #time.sleep(10)
-    hist = unisemi1(adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[0],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[0],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
 
     histdic['total1'] = hist['train_loss_epoch']
     histdic['bulk1'] = hist['kl_global_train']
     #del model0
     gc.collect()
     torch.cuda.empty_cache() 
-    hist = unisemi2(adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[1],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[1],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
 
     histdic['total2'] = hist['train_loss_epoch']
     histdic['bulk2'] = hist['kl_global_train']
@@ -242,7 +244,7 @@ def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
     #time.sleep(10)
     torch.cuda.empty_cache() 
     
-    hist = unisemi3(adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[2],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[2],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
 
     histdic['total3'] = hist['train_loss_epoch']
     histdic['bulk3'] = hist['kl_global_train']
@@ -252,7 +254,7 @@ def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
     gc.collect()
     torch.cuda.empty_cache() 
     #time.sleep(10)
-    hist = unisemi4(adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[3],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[3],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
 
     histdic['total4'] = hist['train_loss_epoch']
     histdic['bulk4'] = hist['kl_global_train']
@@ -270,7 +272,7 @@ def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbounds[3],meanbias=0)
-    model.module.load_state_dict(torch.load('tmp/model4'))
+    model.module.load_state_dict(torch.load(name+'/tmp/model4'))
 
     # reconstruction
     xsemi = []
@@ -281,66 +283,157 @@ def fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
         samples = model.module.sample(tensors, n_samples=1)
         xsemi.append(samples)
     
+    
+    xsemi = np.array(torch.cat(xsemi))[:,:genelen]
+    torch.save(model.module.state_dict(), name+'/models/semi_'+sids[reprepid]+"_to_"+sids[tgtpid])
+    xsemi = xsemi*(xsemi>10)
+    np.save(name + '/inferreddata/'+ sids[reprepid]+'_to_'+sids[tgtpid],xsemi)
+    
+    
     gc.collect()
     torch.cuda.empty_cache() 
+    
+    
     return histdic,xsemi,model
 
 
-def scinfer(representatives,cluster,targetid,bulktype,lambdad,pretrain1batch,pretrain1lr,pretrain1vae,pretrain1gan,lambdabulkr,pretrain2lr, pretrain2vae,pretrain2gan,inferepochs,lambdabulkt,inferlr):
+def scinfer(name, representatives,cluster,targetid,bulktype,
+    lambdad = 4.0,
+    pretrain1batch = 128,
+    pretrain1lr = 1e-3,
+    pretrain1vae = 100,
+    pretrain1gan = 100,
+    lambdabulkr = 1,
+    pretrain2lr = 1e-4,
+    pretrain2vae = 50,
+    pretrain2gan = 50,
+    inferepochs = 150,
+    lambdabulkt = 8.0,
+    inferlr = 2e-4):
     
-    if (os.path.isdir('inferreddata')) == False:
-        os.sys('mkdir inferreddata')
-        
-    if representatives[-3:] == 'txt':
+    if (os.path.isdir(name + '/inferreddata')) == False:
+        os.system('mkdir ' + name + '/inferreddata')
+    if (os.path.isdir(name + '/models')) == False:
+        os.system('mkdir ' + name + '/models')
+    if (os.path.isdir(name + '/tmp')) == False:
+        os.system('mkdir ' + name + '/tmp')
+    
+    if torch.cuda.is_available():
+        device = 'cuda:0'
+    else:
+        device = 'cpu'
+
+    k = 15
+    diagw = 1.0
+    if (representatives[-3:] == 'txt') or type(representatives)==type([]):
         print('Start single-cell inference in cohort mode')
         
         
         sids = []
-        f = open('sids.txt','r')
+        f = open(name + '/sids.txt','r')
         lines = f.readlines()
         for l in lines:
             sids.append(l.strip())
         f.close()
-        
-        
+
+
         repres = []
         f=open(representatives,'r')
         lines = f.readlines()
         f.close()
         for l in lines:
-            repres.append(l)
-        
+            repres.append(int(l.strip()))
+
         cluster_labels = []
         f=open(cluster,'r')
         lines = f.readlines()
         f.close()
         for l in lines:
-            cluster_labels.append(l)
+            cluster_labels.append(int(l.strip()))
         
+        #timing
+        pretrain1start = timeit.default_timer()
         
-        print('pretrain1: reconstruction')
+        print('pretrain 1: representative reconstruction')
         repremodels = []
-        c=0
         for rp in repres:
             device = 'cuda:0'
             sid = sids[rp]
-            repremodels.append(\
-                               fastrecon(pid=sid,\
-                              tgtpid=None,device=device,k=15,diagw=1,vaesteps=int(pretrain1vae),gansteps=int(pretrain1gan),save=True,path=None)\
-                              )
             
+            # if exists, load model
+            modelfile = 'fast_reconst1_' + sid
+            path = name + '/models/fast_reconst1_'+sid
+            if modelfile in os.listdir(name + '/models'):
+                print('load existing pretrain 1 reconstruction model for '+sid)
+                adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
+                model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+                model.module.load_state_dict(torch.load(path))
+                repremodels.append(model)
+                #continue
+            else:
+                # otherwise, train model
+                repremodels.append(\
+                                   fastrecon(name=name,sid=sid,device=device,k=15,diagw=1,vaesteps=int(pretrain1vae),gansteps=int(pretrain1gan),save=True,path=None)\
+                                  )
+
+        # timing
+        pretrain1end = timeit.default_timer()
+        f=open('pretrain1time.txt','w')
+        f.write(str(pretrain1end-pretrain1start))
+        f.close()
+        
+        #timing
+        pretrain2start = timeit.default_timer()
+        
         print('pretrain2: reconstruction with representative bulk loss')
         repremodels2=[]
-        for rp in representatives:
+        i=0
+        for rp in repres:
             sid = sids[rp]
-            repremodels2.append(reconst_pretrain2(sid,repremodels[i],device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True))
+            # if exists, load model
+            print('load existing model')
+            modelfile = 'fastreconst2_' + sid
+            path = name + '/models/fastreconst2_' + sid 
+            if modelfile in os.listdir(name + '/models'):
+                print('load existing pretrain 2 model for ' + sid)
+                adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
+                model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+                model.module.load_state_dict(torch.load(path))
+                repremodels2.append(model)
+                #continue
+            else:
+                repremodels2.append(reconst_pretrain2(name,sid,repremodels[i],device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True))
+            i=i+1
+            
+        #timing
+        pretrain2end = timeit.default_timer()
+        f=open('pretrain2time.txt','w')
+        f.write(str(pretrain2end-pretrain2start))
+        f.close()
+        
+        
+        #timing
+        f = open('infertime.txt','w')
         
         print('inference')
         for i in range(len(sids)):
-            if i not in representatives:
-                tgtpid = sids[i]
-                reprepid = sids[repres[cluster_labels[i]]]
-                fast_semi(reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0)
+            if i not in repres:
+                #timing
+                inferstart = timeit.default_timer()
+                
+                tgtpid = i
+                reprepid = repres[cluster_labels[i]]
+                premodel = repremodels2[cluster_labels[i]]
+                histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0)
+                if (os.path.isdir(name + '/history')) == False:
+                    os.system('mkdir '+ name + '/history')
+                np.save(name + '/history/' + sids[reprepid] + '_to_' + sids[tgtpid] + '.npy',histdic)
+                
+                #timing
+                inferend = timeit.default_timer()
+                f.write(str(inferend-inferend)+'\n')
+        #timing
+        f.close()
         
     else:
         print('Start single-cell inference in single-sample mode')
@@ -366,6 +459,8 @@ def main():
     required = parser.add_argument_group('required arguments')
     optional = parser.add_argument_group('optional arguments')
     
+    required.add_argument('--name',required=True,help="Project name (same as previous steps).")
+    
     required.add_argument('--representatives',required=True,help="Either a txt file including all the IDs of the representatives used in the current round of semi-profiling when running in cohort mode, or a single sample ID when running in single-sample mode.")
     
     optional.add_argument('--cluster',required=False,default='na', help="A txt file specifying the cluster membership. Required when running in cohort mode.")
@@ -386,9 +481,9 @@ def main():
     
     optional.add_argument('--lambdabulkr',required=False, default='1.0', help="Scaling factor for the representative bulk loss. (Default: 1.0)")
     
-    optional.add_argument('--pretrain2lr',required=False, default='50', help="The number of epochs for training the VAE generator during the second pretrain stage. (Default: 50)")
+    optional.add_argument('--pretrain2lr',required=False, default='1e-4', help="The number of epochs for training the VAE generator during the second pretrain stage. (Default: 50)")
     
-    optional.add_argument('--pretrain2vae',required=False, default='na', help="Sample ID of the target sample when running in single-sample mode.")
+    optional.add_argument('--pretrain2vae',required=False, default='50', help="Sample ID of the target sample when running in single-sample mode.")
     
     optional.add_argument('--pretrain2gan',required=False, default='50', help="The number of iterations for training the generator and discriminator jointly during the second pretrain stage. (Default: 50)")
     
@@ -403,7 +498,7 @@ def main():
     
     args = parser.parse_args()
     
-    
+    name = arg.name
     representatives = args.representatives
     cluster = args.cluster
     targetid = args.targetid
@@ -424,7 +519,7 @@ def main():
     
     inferlr = float(args.inferlr)
     
-    scinfer(representatives,cluster,targetid,bulktype,lambdad,pretrain1batch,pretrain1lr,pretrain1vae,pretrain1gan,lambdabulkr,pretrain2lr, pretrain2vae,pretrain2gan,inferepochs,lambdabulkt,inferlr)
+    scinfer(name, representatives,cluster,targetid,bulktype,lambdad,pretrain1batch,pretrain1lr,pretrain1vae,pretrain1gan,lambdabulkr,pretrain2lr, pretrain2vae,pretrain2gan,inferepochs,lambdabulkt,inferlr)
 
 if __name__=="__main__":
     main()

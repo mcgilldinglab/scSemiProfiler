@@ -6,6 +6,7 @@ import copy
 import numpy as np
 import faiss
 import scipy
+from sklearn.decomposition import PCA
 
 ### evaluation functions
 
@@ -13,129 +14,29 @@ def faiss_knn(query, x, n_neighbors=1):
     n_samples = x.shape[0]
     n_features = x.shape[1]
     x = np.ascontiguousarray(x)
-    
     index = faiss.IndexFlatL2(n_features)
-    #index = faiss.IndexFlatIP(n_features)
-                  
     index.add(x)
-    
     if n_neighbors < 2:
         neighbors = 2
     else: 
         neighbors = n_neighbors
-    
     weights, targets = index.search(query, neighbors)
-
-    #sources = np.repeat(np.arange(n_samples), neighbors)
-    #targets = targets.flatten()
-    #weights = weights.flatten()
     weights = weights[:,:n_neighbors]
     if -1 in targets:
         raise InternalError("Not enough neighbors were found. Please consider "
                             "reducing the number of neighbors.")
     return weights
 
-def pearson_compare(query,x):
-    return 0
 
-def cos_compare(query,x):
-    return 0
-
-
-def pca_compare(query,x):
-    qx = np.concatenate([query,x],axis=0)
-    qxpca = PCA(n_components=100)
-    dx=qxpca.fit_transform(qx)
-    
-    newq = dx[:query.shape[0],:].copy(order='C')
-    newx = dx[query.shape[0]:,:].copy(order='C')
-    score = faiss_knn(newq,newx,n_neighbors=1)
-    return score
-
-def umap_compare(query,x):
-    qx = np.concatenate([query,x],axis=0)
-    qxpca = PCA(n_components=100)
-    dpca=qxpca.fit_transform(qx)
-    umap_reduc=umap.UMAP(min_dist=0.5,spread=1.0,negative_sample_rate=5 )
-    dx = umap_reduc.fit_transform(dpca)
-    newq = dx[:query.shape[0],:].copy(order='C')
-    newx = dx[query.shape[0]:,:].copy(order='C')
-    score = faiss_knn(newq,newx,n_neighbors=1)
-    return score
-
-def knncompare(query,x,n_neighbors=1,dist='PCA'):
-    if dist == 'Euclidean':
-        score = faiss_knn(query,x,n_neighbors=n_neighbors)
-        score2 = faiss_knn(x,query,n_neighbors=n_neighbors)
-    elif dist == 'Pearson':
-        score = pearson_compare(query,x)
-        score2 = pearson_compare(x,query)
-    elif dist == 'cos':
-        score = cos_compare(query,x)
-        score2 = cos_compare(x,query)
-    elif dist == 'PCA':
-        score = pca_compare(query,x)
-        score2 = pca_compare(x,query)
-    elif dist == 'UMAP':
-        score = umap_compare(query,x)
-        score2 = umap_compare(x,query)
-    else:
-        score = 0
-        print('distance option not found')
-        
-    return (score.mean() + score2.mean())/2
-
-def normtotal(x,h=1e4):
-    ratios = h/x.sum(axis=1)
-    x=(x.T*ratios).T
-    return x
 
 ## active learning functions 
-def pick_batch(reduced_bulk=None,\
-                representatives=None,\
-                cluster_labels=None,\
-                xdimsemis=None,\
-                xdimgts=None,\
-                discount_rate = 1,\
-                semi_dis_rate = 1,\
-                batch_size=8\
-               ):
-    # 
-    lhet = []
-    lmp = [] 
-    for i in range(len(representatives)):
-        cluster_heterogeneity,in_cluster_uncertainty,uncertain_patient=compute_cluster_heterogeneity(cluster_number=i,\
-                            reduced_bulk=reduced_bulk,\
-                           representatives=init_representatives,\
-                            cluster_labels=init_cluster_labels,\
-                            xdimsemis=xdimsemis,\
-                            xdimgts=xdimgts,\
-                            discount_rate = 1,\
-                            semi_dis_rate = 1\
-                           )
-        lhet.append(cluster_heterogeneity)
-        lmp.append(uncertain_patient)
-    
-    
-    new_representatives = copy.deepcopy(representatives)
-    for i in range(batch_size):
-        mp_index = np.array(lhet).argmax()
-        mp = lmp[mp_index]
-        
-        new_representatives.append(mp)
-        lhet.pop(mp_index)
-        lmp.pop(mp_index)
-    
-    new_cluster_labels= update_membership(reduced_bulk=reduced_bulk,\
-                      representatives=new_representatives)
-    
-    return new_representatives,new_cluster_labels
 
 def pick_batch_eee(reduced_bulk=None,\
                 representatives=None,\
                 cluster_labels=None,\
-                xdimsemis=None,\
-                xdimgts=None,\
+                xdim=None,\
+                pseudobulk=None,\
+                semis=None,\
                 discount_rate = 1,\
                 semi_dis_rate = 1,\
                 batch_size=8\
@@ -148,8 +49,9 @@ def pick_batch_eee(reduced_bulk=None,\
                             reduced_bulk=reduced_bulk,\
                            representatives=representatives,\
                             cluster_labels=cluster_labels,\
-                            xdimsemis=xdimsemis,\
-                            xdimgts=xdimgts,\
+                            xdim=xdim,\
+                            pseudobulk= pseudobulk,\
+                            semis=semis,\
                             discount_rate = 1,\
                             semi_dis_rate = 1\
                            )
@@ -158,11 +60,11 @@ def pick_batch_eee(reduced_bulk=None,\
     
     new_representatives = copy.deepcopy(representatives)
     new_cluster_labels = copy.deepcopy(cluster_labels)
-    print('heterogeneities: ',lhet)
+    #print('heterogeneities: ',lhet)
     for i in range(batch_size):
         new_num = len(new_representatives)
         mp_index = np.array(lhet).argmax()
-        print(mp_index)
+        #print(mp_index)
         lhet[mp_index] = -999
         bestp, new_cluster_labels, hets = best_patient(cluster_labels=new_cluster_labels,representatives=new_representatives,\
                  reduced_bulk=reduced_bulk,cluster_num=mp_index,new_num=new_num)
@@ -199,7 +101,6 @@ def best_patient(cluster_labels=None,representatives=None,\
             bdist2 = bdist2**0.5
             
             if bdist1 > bdist2:
-                #print(pindices[j])
                 het = het + bdist2
                 potential_new_label[pindices[j]]=new_num
             else:
@@ -233,10 +134,11 @@ def compute_cluster_heterogeneity(cluster_number=0,\
                             reduced_bulk=None,\
                            representatives=None,\
                             cluster_labels=None,\
-                            xdimsemis=None,\
-                            xdimgts=None,\
+                            xdim=None,\
+                            pseudobulk=None,\
+                            semis=None,\
                             discount_rate = 1,\
-                            semi_dis_rate = 1\
+                            semi_dis_rate = 1,\
                            ):
     semiflag=0
     representative = representatives[cluster_number]
@@ -257,11 +159,12 @@ def compute_cluster_heterogeneity(cluster_number=0,\
         bdist = bdist.sum()
         bdist = bdist**0.5
         
-        ma = np.array(xdimsemis[patient_index]).copy(order='C')
-        mb = np.array(xdimgts[representative]).copy(order='C')
+        ma = np.array(xdim[patient_index]).copy(order='C')
+        mb = np.array(xdim[representative]).copy(order='C')
         sdist = (faiss_knn(ma,mb,n_neighbors=1).mean())
         
-        semiloss = np.log(1+gts[patient_index].sum(axis=0))- np.log(1+semis[patient_index].sum(axis=0))
+
+        semiloss = np.log(1+pseudobulk[patient_index]) - np.log(1+semis[patient_index].mean(axis=0))
         semiloss = semiloss**2
         semiloss = semiloss.sum()
         semiloss = semiloss**0.5
@@ -277,70 +180,102 @@ def compute_cluster_heterogeneity(cluster_number=0,\
 
 
 
-def activeselection(representatives,cluster,lambdasc,lambdapb):
+def activeselection(name, representatives,cluster,batch,lambdasc,lambdapb):
+    
+    print('Running active learning to select new representatives')
+    
+    sids = []
+    f = open(name + '/sids.txt', 'r')
+    lines = f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
+    
+    if representatives[-3:]=='txt':
+        rep = []
+        f = open(representatives,'r')
+        lines = f.readlines()
+        for l in lines:
+            rep.append(int(l.strip()))
+        f.close()
 
-    rep = []
-    f = open(representatives,'r')
-    lines = f.readlines()
-    for l in lines:
-        rep.append(l)
-    f.close()
+    if cluster[-3:]=='txt':
+        cl=[]
+        f = open(cluster,'r')
+        lines = f.readlines()
+        for l in lines:
+            cl.append(int(l.strip()))
+        f.close()
     
-    cl=[]
-    f = open(cluster,'r')
-    lines = f.readlines()
-    for l in lines:
-        cl.append(l)
-    f.close()
-    
-    bulkdata = anndata.read_h5ad('processed_bulkdata.h5ad')
+    bulkdata = anndata.read_h5ad(name + '/processed_bulkdata.h5ad')
     reduced_bulk = bulkdata.obsm['X_pca']
     
     #acquire semi-profiled cohort
 
-    hvgenes = np.load('hvgenes.npy')
+    hvgenes = np.load(name+'/hvgenes.npy',allow_pickle=True)
     
-    adata = anndata.read_h5ad('sample_sc/' + rep[0] + '.h5ad')
-    hvmask = []
-    for g in adata.var.index:
-        if g in hvgenes:
-            hvmask.append(True)
-        else:
-            hvmask.append(False)
-    hvmask = np.array(hvmask)
+    genelen = len(hvgenes)
     
-    xsemi = []
+    
+    xs = []
+    datalen = []
     for i in range(len(sids)):
-        sid = sids[i]
-        representative = rep[cl[i]]
-        xsemi.append(np.load('inferreddata/'+sids[representative]+'to'+sid+'.npy'))
-        print(i,end=', ')
-
+        if i not in rep:
+            sid = sids[i]
+            representative = rep[cl[i]]
+            x = np.load(name + '/inferreddata/'+sids[representative]+'_to_'+sid+'.npy')
+            xs.append(np.log(x+1))
+            datalen.append(x.shape[0])
+        else:
+            sid = sids[i]
+            adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
+            x = np.array(adata.X[:,:genelen])
+            xs.append(x)
+            datalen.append(x.shape[0])
     
+    xs = np.concatenate(xs, axis=0)
+    
+    
+    pca = PCA(n_components=100)
+    xpcas = pca.fit_transform(xs)
+    
+    xpca = []
+    semis = []
+    offset = 0
+    for i in range(len(sids)):
+        xpca.append(xpcas[offset:offset+datalen[i],:])
+        semis.append(xs[offset:offset+datalen[i],:])
+        offset = offset + datalen[i]
+    
+    bdata = anndata.read_h5ad(name+'/processed_bulkdata.h5ad')
+    pseudobulk = np.exp(bdata.X) - 1
     
     nrep, nlabels = pick_batch_eee(reduced_bulk = reduced_bulk,\
                     representatives = rep,\
                     cluster_labels = cl,\
-                    xdimsemis=xsemi,\
-                    xdimgts=xsemi,\
+                    xdim=xpca,\
+                    pseudobulk = pseudobulk,\
+                    semis=semis,\
                     discount_rate = lambdasc,\
                     semi_dis_rate = lambdapb,\
-                    batch_size=4\
+                    batch_size=batch\
                    )
+    
     new_representatives = nrep
     new_cluster_labels = nlabels
-    f=open('status/eer_cluster_labels_'+str(rnd+1)+'.txt','w')
+    
+    rnd = len(os.listdir(name + '/status'))//2+1
+    
+    f=open(name + '/status/eer_cluster_labels_'+str(rnd)+'.txt','w')
     for i in range(len(new_cluster_labels)):
         f.write(str(new_cluster_labels[i])+'\n')
     f.close()
-    f=open('status/eer_representatives_'+str(rnd+1)+'.txt','w')
+    f=open(name + '/status/eer_representatives_'+str(rnd)+'.txt','w')
     for i in range(len(new_representatives)):
         f.write(str(new_representatives[i])+'\n')
+        
+    print('selection finished')
     f.close()
-
-
-    return
-
 
 
 
@@ -354,6 +289,10 @@ def main():
     
     required.add_argument('--cluster',required=True,help="A txt file specifying the cluster membership.")
     
+    required.add_argument('--name',required=True,help="Project name.")
+    
+    optional.add_argument('--batch',required=False, default='4', help="The batch size of representative selection (Default: 4)")
+    
     optional.add_argument('--lambdasc',required=False,default='1.0', help="Scaling factor for the single-cell transformation difficulty from the representative to the target (Default: 1.0)")
     
     optional.add_argument('--lambdapb',required=False, default='1.0', help="Scaling factor for the pseudobulk data difference (Default: 1.0)")
@@ -361,9 +300,11 @@ def main():
     args = parser.parse_args()
     representatives = args.representatives
     cluster = args.cluster
+    name = args.name
+    batch = int(args.batch)
     lambdasc = float(args.lambdasc)
     lambdapb = float(args.lambdapb)
-    activeselection(representatives,cluster,lambdasc,lambdapb)
+    activeselection(name, representatives,cluster,batch,lambdasc,lambdapb)
 
 if __name__=="__main__":
     main()

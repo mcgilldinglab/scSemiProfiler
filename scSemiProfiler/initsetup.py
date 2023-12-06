@@ -6,38 +6,45 @@ import copy
 import numpy as np
 from sklearn.cluster import KMeans
 
-def initsetup(bulk,geneselection,batch):
+def initsetup(name, bulk,normed,geneselection,batch):
     print('Start initial setup')
+    
+    if (os.path.isdir(name)) == False:
+        os.system('mkdir '+name)
+    else:
+        print(name + ' exists. Please choose another name.')
+        return
+    
+    
+    
     bulkdata = anndata.read_h5ad(bulk)
-    sids = list(bulkdata.obs['sample_ids'])
-    sc.pp.normalize_total(bulkdata, target_sum=1e4)
-    bulkdata.write('normed_bulkdata.h5ad')
+
+    if normed == 'no':
+        sc.pp.normalize_total(bulkdata, target_sum=1e4)
+        
     # write sample ids
-    sids = []
-    f = open('sids.txt','w')
+    sids = list(bulkdata.obs['sample_ids'])
+    f = open(name+'/sids.txt','w')
     for sid in sids:
         f.write(sid+'\n')
     f.close()
     
-    #preprocessing
+    # log transformation
     sc.pp.log1p(bulkdata)
-    if geneselection == 'yes':
-        sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
-    elif geneselection == 'no':
-        pass
+    
+    if geneselection == 'no':
+        hvgenes = np.array(bulkdata.var.index)
     else:
         sc.pp.highly_variable_genes(bulkdata, n_top_genes=6000)
-    
-    bulkdata = bulkdata[:, bulkdata.var.highly_variable]
-    
-    #record hvmask
-    hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
-    np.save('hvgenes.npy',hvgenes)
+        #sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+        bulkdata = bulkdata[:, bulkdata.var.highly_variable]
+        hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
+    np.save(name+'/hvgenes.npy',hvgenes)
     
     #dim reduction and clustering
-    sc.tl.pca(bulkdata, n_comps=100)
+    sc.tl.pca(bulkdata)
     
-    bulkdata.write('processed_bulkdata.h5ad')
+    bulkdata.write(name + '/processed_bulkdata.h5ad')
     
     #cluster
     BATCH_SIZE = batch
@@ -64,16 +71,16 @@ def initsetup(bulk,geneselection,batch):
         repredic[i] = cluster_representative
     centers = np.array(centers)
     #store representatives cluster labels
-    if (os.path.isdir('status')) == False:
-        os.sys('mkdir status')
+    if (os.path.isdir(name + '/status')) == False:
+        os.system('mkdir ' + name + '/status')
     
 
-    f=open('status/init_cluster_labels_4.txt','w')
+    f=open(name + '/status/init_cluster_labels.txt','w')
     for i in range(len(cluster_labels)):
         f.write(str(cluster_labels[i])+'\n')
     f.close()
 
-    f=open('status/init_representatives_4.txt','w')
+    f=open(name + '/status/init_representatives.txt','w')
     for i in range(len(representatives)):
         f.write(str(representatives[i])+'\n')
     f.close()
@@ -92,7 +99,9 @@ def main():
     
     required.add_argument('--bulk',required=True,help="Input bulk data as a h5ad file. Sample IDs should be stored in obs.['sample_ids']. Gene symbols should be stored in var.index.")
     
+    required.add_argument('--name',required=True, help="Project name.")
     
+    optional.add_argument('--normed',required=False, default='no', help="Whether the library size normalization has already been done (Default: no)") ###
     
     optional.add_argument('--geneselection',required=False,default='yes', help="Whether to perform highly variable gene selection: 'yes' or 'no'. (Default: yes)")
     
@@ -100,10 +109,12 @@ def main():
     
     args = parser.parse_args()
     bulk = args.bulk
+    name = args.name
     geneselection = args.geneselection
+    normed = args.normed
     batch = int(args.batch)
     
-    initsetup(bulk,geneselection,batch)
+    initsetup(name,bulk,normed,geneselection,batch)
 
 if __name__=="__main__":
     main()

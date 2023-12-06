@@ -23,6 +23,7 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 - [Software](#software)
 - [Installation](#installation)
 - [Usage](#Usage)
+- [Example](#Example)
 - [Results reproduction](#Results-reproduction)
 - [Credits](#Credits)
 
@@ -33,7 +34,7 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 -- scipy >= 1.11.4  
 -- anndata >= 0.10.3  
 -- faiss-cpu >= 1.7.4  
--- torch >= 2.1.0  
+-- torch >= 1.12.1  
 -- scikit-learn >= 1.3.2  
 -- pandas >= 2.1.3  
 -- jax >= 0.4.19  
@@ -85,8 +86,8 @@ In this section, we introduce how to execute each step of scSemiProfiler for you
 For this initial configuration step, simply provide your bulk data in `.h5ad` format and run the following command for preprocessing and clustering for selecting the initial batch of representative samples.
 
 ```shell
-usage: initsetup    [-h]  --bulk BulkData [--format Format] [--geneselection 
-                    GeneSelection] [--batch BatchSize]
+usage: initsetup    [-h] --bulk BulkData --name Name [--normed Normed] 
+                    [--geneselection GeneSelection] [--batch BatchSize]
 
 scsemiprofiler initsetup
 
@@ -96,10 +97,15 @@ required arguments:
                             stored in obs.['sample_ids']. Gene symbols should be 
                             stored in var.index. Values should either be raw read 
                             counts or normalized expression.
+    --name Name
+                            Project name.
 
 optional arguments:
     -h, --help              Show this help message and exit.
 
+    --normed Normed
+                            Whether the library size normalization has already been 
+                            done (Default: no)
 
     --geneselection GeneSelection
                             Whether to perform highly variable gene selection: 
@@ -116,7 +122,9 @@ After executing, the preprocessed bulk data and clustering information will be s
 This step process the single-cell data (also `.h5ad` format) for the representatives, including the standard single-cell preprocessing and several feature augmentation techniques for enhancing the learning of the deep learning model.Please provide the representatives' single-cell data in the same folder and run the following command.
 
 ```shell
-usage: scprocess [-h] -singlecell SingleCellData [--format Format] [--cellfilter CellFilter] [--threshold Threshold] [--geneset GeneSet] [--weight TopFeatures] [--k K]
+usage: scprocess [-h] -singlecell SingleCellData --name Name [--normed Normed] 
+                    [--cellfilter CellFilter] [--threshold Threshold] [--geneset 
+                    GeneSet] [--weight TopFeatures] [--k K]
 
 scsemiprofiler scprocess
 
@@ -128,9 +136,15 @@ required arguments:
                             should be stored in var.index. Values should either be 
                             raw read counts or normalized expression.
 
+    --name Name
+                            Project name.
+
 optional arguments:
     -h, --help              Show this help message and exit.
 
+    --normed Normed
+                            Whether the library size normalization has already been 
+                            done (Default: no)
 
     --cellfilter CellFilter
                             Whether to perform cell filtering: 'yes' or 'no'.
@@ -165,7 +179,15 @@ In this step we use deep generative models to infer the single-cell data for non
 
 
 ```shell
-usage: scinfer [-h] -representatives RepresentativesID [--cluster ClusterLabels] [--targetid TargetID] [--bulktype BulkType] [--lambdad lambdaD] [--pretrain1batch Pretrain1BatchSize] [--pretrain1lr Pretrain1LearningRate] [--pretrain1vae Pretrain1VAEEpochs] [--pretrain1gan Pretrain1GanIterations] [--lambdabulkr lambdaBulkRepresentative] [--pretrain2lr Pretrain2LearningRate] [--pretrain2vae Pretrain2VAEEpochs] [--pretrain2gan Pretrain2GanIterations] [--inferepochs InferEpochs] [--lambdabulkt lambdaBulkTarget] [--inferlr InferLearningRate]
+usage: scinfer [-h] -representatives RepresentativesID --name Name [--cluster 
+                ClusterLabels] [--targetid TargetID] [--bulktype BulkType] 
+                [--lambdad lambdaD] [--pretrain1batch Pretrain1BatchSize] 
+                [--pretrain1lr Pretrain1LearningRate] [--pretrain1vae 
+                Pretrain1VAEEpochs] [--pretrain1gan Pretrain1GanIterations] 
+                [--lambdabulkr lambdaBulkRepresentative] [--pretrain2lr 
+                Pretrain2LearningRate] [--pretrain2vae Pretrain2VAEEpochs] 
+                [--pretrain2gan Pretrain2GanIterations] [--inferepochs InferEpochs] 
+                [--lambdabulkt lambdaBulkTarget] [--inferlr InferLearningRate]
 
 scsemiprofiler scinfer
 
@@ -175,6 +197,9 @@ required arguments:
                             representatives used in the current round of 
                             semi-profiling when running in cohort mode, or a single 
                             sample ID when running in single-sample mode. 
+
+    --name Name
+                            Project name.
 
 optional arguments:
     -h, --help              Show this help message and exit.
@@ -252,7 +277,7 @@ The inferred data will be stored in the folder "inferreddata" automatically. Onc
 The following command generates the next round of representatives and cluster membership information and store them as `.txt` files in the "status" folder. Then you will provide single-cell data for the new representatives and execute steps (**b**) and (**c**) again to achieve better semi-profiling performance. 
 
 ```shell
-usage: activeselection [-h] -representatives RepresentativesID [--cluster ClusterLabels] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
+usage: activeselection [-h] -representatives RepresentativesID --cluster ClusterLabels [--batch Batch] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
 
 scsemiprofiler scprocess
 
@@ -265,8 +290,14 @@ required arguments:
     --cluster ClusterLabels
                             A `.txt` file specifying the cluster membership. 
 
+    --name Name
+                            Project name.
+
 optional arguments:
     -h, --help              Show this help message and exit.
+
+    --batch Batch           The batch size of representative selection
+                            (default: 4)
 
     --lambdasc Lambdasc
                             Scaling factor for the single-cell transformation 
@@ -281,6 +312,40 @@ optional arguments:
 
 **e,** Downstream Analyses
 Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide some examples in the 'semiresultsanalysis.ipynb' files in each public dataset folder.
+
+## Example
+We provide example bulk and single-cell samples in the "example_data" folder. You can use the jupyter notebook 'example.ipynb' to semi-profile a small example cohort and perform some visualization to check the semi-profiling performance. You can expect results similar to the graph below. Based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
+![flowchart](./inference_example.jpg)
+
+<!---You can perform semi-profiling on this example dataset using the following command:   
+
+1. Perform the initial setup and get initial representatives.   
+    ```
+    initsetup  --bulk example_data/bulkdata.h5ad --name testexample --normed yes] 
+                        --geneselection no --batch 2
+    ```
+2. Get single-cell data for representatives.
+    ```
+    get_eg_representatives --name testexample 
+    ```
+3. Process the single-cell data, performing feature augmentations.  
+    ```
+    scprocess  -singlecell testexample/representative_sc.h5ad --name testexample 
+                        --normed yes    --cellfilter no  
+    ```
+4. Infer the single-cell data for non-representative samples.
+    ```
+    scinfer   -representatives testexample/status/init_representatives.txt  --name  
+                    testexample --cluster testexample/status/init_cluster_labels.txt
+    ```
+
+5. Use active learning to select the next round and continue the loop (optional).
+    ```
+    activeselection -representatives testexample/status/init_representatives.txt 
+        --name testexample    --batch 2
+        --cluster testexample/status/init_cluster_labels.txt
+    ```
+-->
 
 
 ## Results reproduction
