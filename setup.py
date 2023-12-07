@@ -17,7 +17,7 @@ setup(
     'scipy>= 1.11.4',
     'anndata>= 0.10.3',
     'faiss-cpu>= 1.7.4',
-    'torch>= 2.1.0',
+    'torch>= 1.12.1',
     'scikit-learn>= 1.3.2',
     'pandas>= 2.1.3',
     'jax>= 0.4.19',

@@ -79,7 +79,7 @@ conda activate semiprofiler
 	```shell
 	pip install --upgrade https://github.com/mcgilldinglab/scSemiProfiler/zipball/main
 ## Usage
-In this section, we introduce how to execute each step of scSemiProfiler for your dataset. 
+In this section, we provide guidance on executing each step of scSemiProfiler with your dataset. scSemiProfiler offers two modes of operation: it can be run via the command line or imported as a Python package. For every command line instruction provided below, there is an equivalent Python function. Detailed usage examples of these functions can be found in the "example.ipynb" notebook.
 
 **a,** Initial Setup
 
