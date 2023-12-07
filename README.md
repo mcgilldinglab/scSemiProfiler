@@ -74,10 +74,11 @@ conda activate semiprofiler
 	```
 	
 * __Option 2: Install from Github__:    
-
-	python 3: 
 	```shell
 	pip install --upgrade https://github.com/mcgilldinglab/scSemiProfiler/zipball/main
+
+Please note that you may be required to manually install a version of PyTorch compatible with your device's specifications. For available options, refer to [here](https://pytorch.org/get-started/previous-versions/).
+
 ## Usage
 In this section, we provide guidance on executing each step of scSemiProfiler with your dataset. scSemiProfiler offers two modes of operation: it can be run via the command line or imported as a Python package. For every command line instruction provided below, there is an equivalent Python function. Detailed usage examples of these functions can be found in the "example.ipynb" notebook.
 
@@ -122,7 +123,7 @@ After executing, the preprocessed bulk data and clustering information will be s
 This step process the single-cell data (also `.h5ad` format) for the representatives, including the standard single-cell preprocessing and several feature augmentation techniques for enhancing the learning of the deep learning model.Please provide the representatives' single-cell data in the same folder and run the following command.
 
 ```shell
-usage: scprocess [-h] -singlecell SingleCellData --name Name [--normed Normed] 
+usage: scprocess [-h] --singlecell SingleCellData --name Name [--normed Normed] 
                     [--cellfilter CellFilter] [--threshold Threshold] [--geneset 
                     GeneSet] [--weight TopFeatures] [--k K]
 
@@ -277,7 +278,7 @@ The inferred data will be stored in the folder "inferreddata" automatically. Onc
 The following command generates the next round of representatives and cluster membership information and store them as `.txt` files in the "status" folder. Then you will provide single-cell data for the new representatives and execute steps (**b**) and (**c**) again to achieve better semi-profiling performance. 
 
 ```shell
-usage: activeselection [-h] -representatives RepresentativesID --cluster ClusterLabels [--batch Batch] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
+usage: activeselect [-h] --representatives RepresentativesID --cluster ClusterLabels [--batch Batch] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
 
 scsemiprofiler scprocess
 
@@ -314,38 +315,57 @@ optional arguments:
 Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide some examples in the 'semiresultsanalysis.ipynb' files in each public dataset folder.
 
 ## Example
-We provide example bulk and single-cell samples in the "example_data" folder. You can use the jupyter notebook 'example.ipynb' to semi-profile a small example cohort and perform some visualization to check the semi-profiling performance. You can expect results similar to the graph below. Based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
+We provide example bulk and single-cell samples in the "example_data" folder. You can use the jupyter notebook "example.ipynb" or the example commands to semi-profile a small example cohort and perform some visualization to check the semi-profiling performance. 
+
+### Run examples using Jupyter Notebook 
+If you installed scSemiProfiler to a new Anaconda environment, then you might need to follow these steps to install the environment as a Jupyter Notebook kernel.
+
+```
+conda install ipykernel
+```
+
+```
+python -m ipykernel install --user --name=semiprofiler --display-name="scSemiProfiler"
+```
+Then you can select the kernel "scSemiProfiler" in Jupyter Notebook and run our examples.
+
+You can expect results similar to the graph below. Based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
 ![flowchart](./inference_example.jpg)
 
-<!---You can perform semi-profiling on this example dataset using the following command:   
+### Run examples using commands
 
-1. Perform the initial setup and get initial representatives.   
-    ```
-    initsetup  --bulk example_data/bulkdata.h5ad --name testexample --normed yes] 
-                        --geneselection no --batch 2
-    ```
-2. Get single-cell data for representatives.
-    ```
-    get_eg_representatives --name testexample 
-    ```
-3. Process the single-cell data, performing feature augmentations.  
-    ```
-    scprocess  -singlecell testexample/representative_sc.h5ad --name testexample 
-                        --normed yes    --cellfilter no  
-    ```
-4. Infer the single-cell data for non-representative samples.
-    ```
-    scinfer   -representatives testexample/status/init_representatives.txt  --name  
-                    testexample --cluster testexample/status/init_cluster_labels.txt
-    ```
+You can also run the command line version to perform semi-profiling on this example dataset:
 
-5. Use active learning to select the next round and continue the loop (optional).
-    ```
-    activeselection -representatives testexample/status/init_representatives.txt 
-        --name testexample    --batch 2
-        --cluster testexample/status/init_cluster_labels.txt
-    ```
--->
+Step 1: Perform the initial setup and get initial representatives.  
+```
+initsetup  --bulk example_data/bulkdata.h5ad --name testexample --normed yes
+                    --geneselection no --batch 2
+``` 
+\
+Step 1.5: Get single-cell data for representatives. 
+```
+get_eg_representatives --name testexample 
+```
+\
+Step 2: Process the single-cell data, performing feature augmentations.  
+```
+scprocess  --singlecell testexample/representative_sc.h5ad --name testexample 
+                    --normed yes    --cellfilter no  
+```
+\
+Step 3: Infer the single-cell data for non-representative samples.
+```
+scinfer   --representatives testexample/status/init_representatives.txt  --name  
+                testexample --cluster testexample/status/init_cluster_labels.txt
+```
+\
+Step 4: Use active learning to select the next round and continue the loop (optional).
+```
+activeselect --representatives testexample/status/init_representatives.txt 
+    --name testexample    --batch 2
+    --cluster testexample/status/init_cluster_labels.txt
+```
+
 
 
 ## Results reproduction

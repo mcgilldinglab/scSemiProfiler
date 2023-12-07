@@ -280,7 +280,7 @@ def activeselection(name, representatives,cluster,batch,lambdasc,lambdapb):
 
 
 def main():
-    parser=argparse.ArgumentParser(description="scSemiProfiler initsetup")
+    parser=argparse.ArgumentParser(description="Selecting new representatives using active learning")
     parser._action_groups.pop()
     required = parser.add_argument_group('required arguments')
     optional = parser.add_argument_group('optional arguments')

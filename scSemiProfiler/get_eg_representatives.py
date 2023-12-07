@@ -66,12 +66,14 @@ def get_eg_representatives(name):
 
 
 def main():
-    parser=argparse.ArgumentParser(description="scSemiProfiler initsetup")
-    parser._action_groups.pop()
-    required = parser.add_argument_group('required arguments')
-    optional = parser.add_argument_group('optional arguments')
+    parser = argparse.ArgumentParser(description="scSemiProfiler initsetup")
+    #parser._action_groups.pop()
+    parser.add_argument('--name', help='Project name.')
+    args = parser.parse_args()
+    #required = parser.add_argument_group('required arguments')
+    #optional = parser.add_argument_group('optional arguments')
     
-    required.add_argument('--name',required=True,help="Project name.")
+    #required.add_argument('--name',required=True,help="Project name.")
     
     #optional.add_argument('--na',required=False, default='new_project', help="Pe.")
 

@@ -3,7 +3,7 @@ import torch
 import os
 import timeit
 import copy
-
+import argparse
 import anndata
 from anndata import AnnData
 import scanpy as sc
@@ -322,7 +322,8 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
         device = 'cuda:0'
     else:
         device = 'cpu'
-
+    
+    
     k = 15
     diagw = 1.0
     if (representatives[-3:] == 'txt') or type(representatives)==type([]):
@@ -357,7 +358,6 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
         print('pretrain 1: representative reconstruction')
         repremodels = []
         for rp in repres:
-            device = 'cuda:0'
             sid = sids[rp]
             
             # if exists, load model
@@ -424,7 +424,7 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
                 tgtpid = i
                 reprepid = repres[cluster_labels[i]]
                 premodel = repremodels2[cluster_labels[i]]
-                histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0)
+                histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0)
                 if (os.path.isdir(name + '/history')) == False:
                     os.system('mkdir '+ name + '/history')
                 np.save(name + '/history/' + sids[reprepid] + '_to_' + sids[tgtpid] + '.npy',histdic)
@@ -445,7 +445,7 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
         print('pretrain2: reconstruction with representative bulk loss')
         premodel = reconst_pretrain2(repre,repremodel,device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True)
         print('inference')
-        fast_semi(repre,target,premodel,device='cuda:0',k=15,diagw=1.0)
+        fast_semi(repre,target,premodel,device=device,k=15,diagw=1.0)
     
     print('Finished single-cell inference')
     return
@@ -454,7 +454,7 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
 
 
 def main():
-    parser=argparse.ArgumentParser(description="scSemiProfiler scinfer")
+    parser = argparse.ArgumentParser(description="scSemiProfiler scinfer")
     parser._action_groups.pop()
     required = parser.add_argument_group('required arguments')
     optional = parser.add_argument_group('optional arguments')
@@ -498,7 +498,7 @@ def main():
     
     args = parser.parse_args()
     
-    name = arg.name
+    name = args.name
     representatives = args.representatives
     cluster = args.cluster
     targetid = args.targetid
@@ -509,7 +509,7 @@ def main():
     pretrain1lr = float(args.pretrain1lr)
     pretrain1vae = int(args.pretrain1vae)
     pretrain1gan = int(args.pretrain1gan)
-    lambdabulkr = float(float9args.lambdabulkr)
+    lambdabulkr = float(args.lambdabulkr)
     
     pretrain2lr = float(args.pretrain2lr)
     pretrain2vae = int(args.pretrain2vae)
@@ -518,6 +518,8 @@ def main():
     lambdabulkt = float(args.lambdabulkt)
     
     inferlr = float(args.inferlr)
+    
+    
     
     scinfer(name, representatives,cluster,targetid,bulktype,lambdad,pretrain1batch,pretrain1lr,pretrain1vae,pretrain1gan,lambdabulkr,pretrain2lr, pretrain2vae,pretrain2gan,inferepochs,lambdabulkt,inferlr)
 

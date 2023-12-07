@@ -435,7 +435,7 @@ def main():
     normed = args.normed
     name = args.name
     cellfilter = args.cellfilter
-    threshold = args.threshold
+    threshold = float(args.threshold)
     geneset = args.geneset
     weight = args.weight
     k = args.k
