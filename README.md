@@ -53,24 +53,10 @@ conda activate semiprofiler
 
  There are 2 options to install scSemiProfiler.  
 * __Option 1: Install from download directory__   
-	cd to the downloaded scSemiProfiler package root directory
-
-	```shell
-	cd scSemiProfiler
-	```
-
-    use pip tool to install
+	cd to the downloaded scSemiProfiler package root directory and use pip tool to install
 
 	```shell
 	pip install .
-	```
-
-    or
-
-	run python setup to install   
-
-	```shell
-	python setup.py install
 	```
 	
 * __Option 2: Install from Github__:    
