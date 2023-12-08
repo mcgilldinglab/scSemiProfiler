@@ -10,7 +10,7 @@ import scanpy as sc
 from sklearn.neighbors import kneighbors_graph
 import gc
 from fast_generator import *
-
+import pickle
 
 def setdata(name,sid,device='cuda:0',k=15,diagw=1.0):
     adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
@@ -66,7 +66,11 @@ def fastrecon(name, sid, device='cuda:0',k=15,diagw=1.0,vaesteps=100,gansteps=10
                 os.system('mkdir '+ name + '/models')
             path = name + '/models/fast_reconst1_'+sid
         torch.save(model.module.state_dict(), path)
-        
+    
+    
+    with open(name+'/history/pretrain1_' + sid + '.pkl', 'wb') as pickle_file:
+                        pickle.dump(model.history, pickle_file)
+            
     return model
 
 
@@ -101,25 +105,26 @@ def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaestep
         if path == None:
             path = name + '/models/fastreconst2_' + sid
         torch.save(model.module.state_dict(), path)
-        
+    
+    with open(name+'/history/pretrain2_' + sid + '.pkl', 'wb') as pickle_file:
+                        pickle.dump(model.history, pickle_file)
+    
     return model
 
 
-pp=8
 
-dis = 1 #0.2
+
 
 def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model0 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight =1*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight =1*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                       power=2,upperbound=99999,meanbias=0)
     if type(premodel)==type('string'):
         model0.module.load_state_dict(torch.load(premodel))
     else:
         model0.module.load_state_dict(premodel.module.state_dict())
-    lr = adata.X.shape[0] / (4e3) * 2e-4
-    lr = 2e-4 * dis
+    lr = 2e-4 
     model0.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model0.module.state_dict(), name+'/tmp/model0')
     return model0.history
@@ -128,11 +133,10 @@ def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpi
 def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model1 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 4*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = 4*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
     model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
-    lr = adata.X.shape[0] / (4e3) * 2e-4
-    lr = 2e-4 * dis
+    lr = 2e-4
     model1.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model1.module.state_dict(), name+'/tmp/model1')
     return model1.history
@@ -140,11 +144,10 @@ def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
 def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model2 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 16*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = 16*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
     model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
-    lr = adata.X.shape[0] / (4e3) * 2e-4
-    lr = 2e-4 * dis
+    lr = 2e-4
     model2.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model2.module.state_dict(), name+'/tmp/model2')
     return model2.history
@@ -152,11 +155,10 @@ def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
 def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model3 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 64*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = 64*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
     model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
-    lr = adata.X.shape[0] / (4e3) * 2e-4
-    lr = 2e-4 * dis
+    lr = 2e-4 
     model3.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model3.module.state_dict(), name+'/tmp/model3')
     return model3.history
@@ -164,11 +166,10 @@ def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
 def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model4 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 128*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = 128*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
     model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
-    lr = adata.X.shape[0] / (4e3) * 2e-4
-    lr = 2e-4 * dis
+    lr = 2e-4 
     model4.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model4.module.state_dict(), name+'/tmp/model4')
     return model4.history
@@ -176,11 +177,10 @@ def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
 def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
     model = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
                       markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 512*pp,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = 512*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound,meanbias=0)
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
-    lr = adata.X.shape[0] / (4e3) * 4e-4
-    lr = 2e-4 * dis
+    lr = 2e-4 
     model.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
@@ -274,7 +274,7 @@ def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
                      power=2,upperbound=upperbounds[3],meanbias=0)
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
 
-    # reconstruction
+    # inference
     xsemi = []
     scdl = model._make_data_loader(
             adata=adata,batch_size=batch_size
@@ -283,11 +283,15 @@ def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
         samples = model.module.sample(tensors, n_samples=1)
         xsemi.append(samples)
     
-    
+    # save inferred data
     xsemi = np.array(torch.cat(xsemi))[:,:genelen]
     torch.save(model.module.state_dict(), name+'/models/semi_'+sids[reprepid]+"_to_"+sids[tgtpid])
     xsemi = xsemi*(xsemi>10)
     np.save(name + '/inferreddata/'+ sids[reprepid]+'_to_'+sids[tgtpid],xsemi)
+    
+    # save training history
+    with open(name+'/history/inference_' + sids[reprepid] + '_to_' + sids[tgtpid] + '.pkl', 'wb') as pickle_file:
+                    pickle.dump(histdic, pickle_file)
     
     
     gc.collect()
@@ -309,7 +313,8 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
     pretrain2gan = 50,
     inferepochs = 150,
     lambdabulkt = 8.0,
-    inferlr = 2e-4):
+    inferlr = 2e-4,
+    device = 'cuda:0'):
     
     if (os.path.isdir(name + '/inferreddata')) == False:
         os.system('mkdir ' + name + '/inferreddata')
@@ -317,11 +322,10 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
         os.system('mkdir ' + name + '/models')
     if (os.path.isdir(name + '/tmp')) == False:
         os.system('mkdir ' + name + '/tmp')
+    if (os.path.isdir(name + '/history')) == False:
+        os.system('mkdir '+ name + '/history')
     
-    if torch.cuda.is_available():
-        device = 'cuda:0'
-    else:
-        device = 'cpu'
+    device = device
     
     
     k = 15
@@ -423,11 +427,15 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
                 
                 tgtpid = i
                 reprepid = repres[cluster_labels[i]]
+                
+                fname = sids[reprepid]+'_to_'+sids[tgtpid]+'.npy'
+                if fname in os.listdir(name+'/inferreddata/'):
+                    print('Inference for '+sids[i]+' has been finished previously. Skip.')
+                    continue
+                
                 premodel = repremodels2[cluster_labels[i]]
                 histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0)
-                if (os.path.isdir(name + '/history')) == False:
-                    os.system('mkdir '+ name + '/history')
-                np.save(name + '/history/' + sids[reprepid] + '_to_' + sids[tgtpid] + '.npy',histdic)
+                
                 
                 #timing
                 inferend = timeit.default_timer()

@@ -55,6 +55,9 @@ def get_eg_representatives(name):
     adata.var = repredata.var
     
     adata.write(name + '/representative_sc.h5ad')
+    
+    print('Obtained single-cell data for representatives.')
+    
     return
 
 

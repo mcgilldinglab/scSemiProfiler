@@ -85,7 +85,9 @@ def initsetup(name, bulk,normed,geneselection,batch):
         f.write(str(representatives[i])+'\n')
     f.close()
     
-    print('Initial setup finished.')
+    print('Initial setup finished. Selected '+str(batch)+' representatives:')
+    for i in range(batch):
+        print(sids[representatives[i]])
     return
 
 

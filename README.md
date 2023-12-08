@@ -315,7 +315,12 @@ python -m ipykernel install --user --name=semiprofiler --display-name="scSemiPro
 ```
 Then you can select the kernel "scSemiProfiler" in Jupyter Notebook and run our examples.
 
-You can expect results similar to the graph below. Based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
+You can expect results similar to the graph below. 
+
+Firstly, the pretrains should enable the model to perform almost perfect reconstruction.
+![flowchart](./recon_example.jpg)
+
+Then, based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
 ![flowchart](./inference_example.jpg)
 
 ### Run examples using commands
