@@ -289,7 +289,7 @@ optional arguments:
 Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide some examples in the 'semiresultsanalysis.ipynb' files in each public dataset folder.
 
 ## Example
-We provide example bulk and single-cell samples in the "example_data" folder. Please download this repository to run scSemiProfiler on them. You can use the jupyter notebook [example.ipynb](example.ipynb) or the example commands to semi-profile a small example cohort and perform some visualizations to check the semi-profiling performance. 
+We provide example bulk and single-cell samples in the [example_data](example_data/) folder. Please download this repository to run scSemiProfiler on them. You can use the jupyter notebook [example.ipynb](example.ipynb) or the example commands to semi-profile a small example cohort and perform some visualizations to check the semi-profiling performance. 
 
 ### Run examples using Jupyter Notebook 
 First, follow these steps to install the conda environment for scSemiProfiler as a Jupyter Notebook kernel.
