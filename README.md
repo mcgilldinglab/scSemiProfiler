@@ -20,40 +20,29 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 
 
 ## Table of Contents
-- [Software](#software)
+- [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Usage](#Usage)
 - [Example](#Example)
-- [Results reproduction](#Results-reproduction)
+- [Results reproduction](#results-reproduction)
 - [Credits](#Credits)
 
-## Software
-* Python3.9+
-* Python side-packages:   
--- scanpy >= 1.9.6  
--- scipy >= 1.11.4  
--- anndata >= 0.10.3  
--- faiss-cpu >= 1.7.4  
--- torch >= 1.12.1  
--- scikit-learn >= 1.3.2  
--- pandas >= 2.1.3  
--- jax >= 0.4.19  
--- scvi-tools >= 1.0.4  
+## Prerequisites
+First, install [Anaconda](https://www.anaconda.com/). You can find specific instructions for different operating systems [here](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html).
 
-## Installation
- Highly recommended:    
- Install conda and create a new conda environment:
+Second, create a new conda environment and activate it:
 ```
 conda create -n semiprofiler python=3.9
 ```
-Then activate the conda environment
 ```
 conda activate semiprofiler
 ```
+Finally, install the version of PyTorch compatible with your devices by following the [instructions on the official website](https://pytorch.org/get-started/locally/). 
+## Installation
 
  There are 2 options to install scSemiProfiler.  
 * __Option 1: Install from download directory__   
-	cd to the downloaded scSemiProfiler package root directory and use pip tool to install
+	download scSemiProfiler from this repository, go to the downloaded scSemiProfiler package root directory and use pip tool to install
 
 	```shell
 	pip install .
@@ -62,14 +51,14 @@ conda activate semiprofiler
 * __Option 2: Install from Github__:    
 	```shell
 	pip install --upgrade https://github.com/mcgilldinglab/scSemiProfiler/zipball/main
-
-Please note that you may be required to manually install a version of PyTorch compatible with your device's specifications. For available options, refer to [here](https://pytorch.org/get-started/previous-versions/).
+    ```
 
 ## Usage
-In this section, we provide guidance on executing each step of scSemiProfiler with your dataset. scSemiProfiler offers two modes of operation: it can be run via the command line or imported as a Python package. For every command line instruction provided below, there is an equivalent Python function. Detailed usage examples of these functions can be found in the "example.ipynb" notebook.
+In this section, we provide guidance on executing each step of scSemiProfiler with your dataset. scSemiProfiler offers two modes of operation: it can be run via the command line or imported as a Python package. 
 
-**a,** Initial Setup
+Please note that for each command described below, there is an equivalent Python function available. These might offer a more convenient usage option. Examples of how to utilize these functions can be found in the [example.ipynb](example.ipynb) notebook.
 
+**a,** Initial Setup\
 For this initial configuration step, simply provide your bulk data in `.h5ad` format and run the following command for preprocessing and clustering for selecting the initial batch of representative samples.
 
 ```shell
@@ -105,7 +94,7 @@ optional arguments:
 ```
 After executing, the preprocessed bulk data and clustering information will be stored automatically. 
 
-**b,** Representative Single-cell Profiling and Processing
+**b,** Representative Single-cell Profiling and Processing\
 This step process the single-cell data (also `.h5ad` format) for the representatives, including the standard single-cell preprocessing and several feature augmentation techniques for enhancing the learning of the deep learning model.Please provide the representatives' single-cell data in the same folder and run the following command.
 
 ```shell
@@ -161,7 +150,7 @@ The processed single-cell data will be stored automatically in the 'sc_samples' 
 
 
 
-**c,**  Deep Generative Inference
+**c,**  Deep Generative Inference\
 In this step we use deep generative models to infer the single-cell data for non-representative samples using the bulk data and the representatives' single-cell data. The following infereence command can either be excuted in cohort mode for inferring all non-representatives or in single-sample mode for inferring one target sample using one representative. 
 
 
@@ -259,8 +248,7 @@ optional arguments:
 The inferred data will be stored in the folder "inferreddata" automatically. Once the single-cell inference is finished for all the non-representative samples, you may choose to stop the pipeline and proceed to downstream analyses using the semi-profiled single-cell cohort. You may also proceed to step (**d**) and use active learning to select the next batch of representative samples to further improve the semi-profiling. 
 
 
-**d,**  Representative Selection Decision
-
+**d,**  Representative Selection Decision\
 The following command generates the next round of representatives and cluster membership information and store them as `.txt` files in the "status" folder. Then you will provide single-cell data for the new representatives and execute steps (**b**) and (**c**) again to achieve better semi-profiling performance. 
 
 ```shell
@@ -301,10 +289,10 @@ optional arguments:
 Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide some examples in the 'semiresultsanalysis.ipynb' files in each public dataset folder.
 
 ## Example
-We provide example bulk and single-cell samples in the "example_data" folder. You can use the jupyter notebook "example.ipynb" or the example commands to semi-profile a small example cohort and perform some visualization to check the semi-profiling performance. 
+We provide example bulk and single-cell samples in the "example_data" folder. Please download this repository to run scSemiProfiler on them. You can use the jupyter notebook [example.ipynb](example.ipynb) or the example commands to semi-profile a small example cohort and perform some visualizations to check the semi-profiling performance. 
 
 ### Run examples using Jupyter Notebook 
-If you installed scSemiProfiler to a new Anaconda environment, then you might need to follow these steps to install the environment as a Jupyter Notebook kernel.
+First, follow these steps to install the conda environment for scSemiProfiler as a Jupyter Notebook kernel.
 
 ```
 conda install ipykernel
@@ -313,15 +301,19 @@ conda install ipykernel
 ```
 python -m ipykernel install --user --name=semiprofiler --display-name="scSemiProfiler"
 ```
-Then you can select the kernel "scSemiProfiler" in Jupyter Notebook and run our examples.
+Then open the notebook. You can now select the kernel "scSemiProfiler" in Jupyter Notebook and run our examples.
 
-You can expect results similar to the graph below. 
+The notebook will go through the following steps: (1) initial setup, which includes preprocessing and clustering bulk data, and selecting initial representatives; (1.5) obtaining single-cell data for representatives; (2) processing single-cell data and performing feature augmentations; (3) single-cell inference using deep generative models.
+
+After executing these steps, you can perform some visualizations to assess the performance. You can expect results similar to the graphs shown below.
 
 Firstly, the pretrains should enable the model to perform almost perfect reconstruction.
 ![flowchart](./recon_example.jpg)
 
 Then, based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
 ![flowchart](./inference_example.jpg)
+
+When the inference is finished, you have the options to use active learning algorithm to select more representatives and go to the next round of semi-profiling. See more details in the notebook. 
 
 ### Run examples using commands
 
@@ -368,7 +360,7 @@ The preprocessed COVID-19 dataset is from [Stephenson et al.'s study](https://ww
 
  
 ### Testing functionalities on a few example samples
-The pipeline_test,ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples.
+The pipeline_test.ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples.
 ### Perform semi-profiling for a cohort
 The semiloop.ipynb is for semi-profiling the whole cohort using the deep generative model and active learning iteratively. 
 ### Downstream analysis results generation
@@ -378,6 +370,7 @@ In each folder, semiresultsanalysis.ipynb, deconv_benchmarking.ipynb, and cellch
 scSemiProfiler is jointly developed by [Jingtao Wang](https://github.com/JingtaoWang22), [Gregory Fonseca](https://www.mcgill.ca/expmed/dr-gregory-fonseca-0), and [Jun Ding](https://github.com/phoenixding) from McGill University.
 
 ## Contacts
+Please don't hesitate to contact us if you have any questions:
 * jingtao.wang at mail.mcgill.ca 
 
 
