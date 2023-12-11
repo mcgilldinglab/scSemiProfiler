@@ -125,7 +125,7 @@ def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpi
     else:
         model0.module.load_state_dict(premodel.module.state_dict())
     lr = 2e-4 
-    model0.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model0.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model0.module.state_dict(), name+'/tmp/model0')
     return model0.history
 
@@ -137,7 +137,7 @@ def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
                      power=2,upperbound=upperbound,meanbias=0)
     model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
     lr = 2e-4
-    model1.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model1.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model1.module.state_dict(), name+'/tmp/model1')
     return model1.history
 
@@ -148,7 +148,7 @@ def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
                      power=2,upperbound=upperbound,meanbias=0)
     model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
     lr = 2e-4
-    model2.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model2.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model2.module.state_dict(), name+'/tmp/model2')
     return model2.history
 
@@ -159,7 +159,7 @@ def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
                      power=2,upperbound=upperbound,meanbias=0)
     model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
     lr = 2e-4 
-    model3.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model3.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model3.module.state_dict(), name+'/tmp/model3')
     return model3.history
 
@@ -170,7 +170,7 @@ def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
                      power=2,upperbound=upperbound,meanbias=0)
     model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
     lr = 2e-4 
-    model4.train(max_epochs=400, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model4.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model4.module.state_dict(), name+'/tmp/model4')
     return model4.history
 
@@ -181,7 +181,7 @@ def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid
                      power=2,upperbound=upperbound,meanbias=0)
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
     lr = 2e-4 
-    model.train(max_epochs=200, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
 

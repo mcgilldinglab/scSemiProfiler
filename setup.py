@@ -7,7 +7,7 @@ setup(
     author='Jingtao Wang',
     author_email = 'jingtao.wang@mail.mcgill.ca',
     url='https://github.com/mcgilldinglab/scSemiProfiler',
-    entry_points={'console_scripts':['activeselect=scSemiProfiler.activeselect:main','scprocess=scSemiProfiler.scprocess:main','initsetup=scSemiProfiler.initsetup:main','scinfer=scSemiProfiler.scinfer:main']},
+    entry_points={'console_scripts':['activeselect=scSemiProfiler.activeselect:main','scprocess=scSemiProfiler.scprocess:main','initsetup=scSemiProfiler.initsetup:main','scinfer=scSemiProfiler.scinfer:main','get_eg_representatives=scSemiProfiler.get_eg_representatives:main']},
     #packages=['scSemiProfiler'],
     packages=find_packages(),
     classifiers=[
@@ -21,6 +21,8 @@ setup(
     'scikit-learn>= 1.3.2',
     'pandas>= 2.1.3',
     'jax>= 0.4.19',
+    'igraph>=0.9.9',
+    'gseapy>=1.0.4',                  
     'scvi-tools>= 1.0.4'],
 )
 

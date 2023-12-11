@@ -360,7 +360,7 @@ def scprocess(name,singlecell,normed,cellfilter,threshold,geneset,weight,k):
         np.save(name + '/geneset_scores/' + sid,zp)
         zps.append(zp)
     
-    if 'hvset.npy' not in os.listdir():
+    if 'hvset.npy' not in os.listdir(name):
         zps=np.concatenate(zps,axis=0)
         zdata = anndata.AnnData(zps)
         sc.pp.log1p(zdata)
@@ -368,6 +368,7 @@ def scprocess(name,singlecell,normed,cellfilter,threshold,geneset,weight,k):
         hvset = zdata.var.highly_variable
         np.save(name + '/hvset.npy',hvset)
 
+        
     
         
     # select highly variable genes (genes in preprocessed bulk data)
