@@ -313,7 +313,9 @@ Firstly, the pretrains should enable the model to perform almost perfect reconst
 Then, based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
 ![flowchart](./inference_example.jpg)
 
-When the inference is finished, you have the options to use active learning algorithm to select more representatives and go to the next round of semi-profiling. See more details in the notebook. 
+When the inference is finished, we also compare the results of a series of single-cell level downstream analysis using the real cohort and semi-profiled cohort. These tasks includes UMAP visualizations, cell type composition analysis, biomarkers discovery, GO enrichment analysis, PAGA, cell-cell interactions analysis, etc. The high similarity between the real-profiled version and semi-profiled version demonstrates the reliable performance of scSemiProfiler. See all the results in the notebook.
+
+If budget allows, you have the options to use active learning algorithm to select more representatives and go to the next round of semi-profiling. At the end of each round, you can use the new representatives to evaluate the semi-profiling performance and decide if you can stop. See more details in the notebook. 
 
 ### Run examples using commands
 

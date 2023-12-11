@@ -303,8 +303,129 @@ def assemble_cohort(name,
     return semidata
 
 
+def assemble_representatives(name,celltype_key='celltypes',sample_info_keys = ['states_collection_sum'],rnd=2,batch=2):
+    
+    sids=[]
+    f = open(name+'/sids.txt','r')
+    lines=f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
+    
+    
+    reps = []
+    f=open(name + '/status/eer_representatives_' + str(rnd) + '.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        reps.append(int(l.strip()))
+    f.close()
 
 
+    newcl=[]
+    f=open(name + '/status/eer_cluster_labels_' + str(rnd) + '.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        newcl.append(int(l.strip()))
+    f.close()
+
+    newreps = reps[-batch:]
+    alldata = anndata.read_h5ad('example_data/scdata.h5ad')
+    
+    newrepsids = []
+    for i in newreps:
+        newrepsids.append(sids[i])
+    
+    repmask =[] 
+    for i in range(alldata.X.shape[0]):
+        if alldata.obs['sample_ids'][i] in newrepsids:
+            repmask.append(True)
+        else:
+            repmask.append(False)
+    repmask = np.array(repmask)
+    
+    realrepdata = alldata[repmask]
+    
+    
+    
+    
+    ### load semi profiled data 
+    oldreps = reps[:-batch]
+    
+    if rnd==2:
+        clname = name + '/status/init_cluster_labels.txt'
+    else:
+        clname = name + '/status/eer_cluster_labels_'+str(rnd-1)+'.txt'
+    
+    oldcl = []
+    f = open(clname, 'r')
+    lines = f.readlines()
+    for l in lines:
+        oldcl.append(int(l.strip()))
+    f.close()
+    
+    
+    ### train annotator using the previous representatives
+    xtrain = []
+    ytrain = []
+    for i in range(len(oldreps)):
+        sid = sids[oldreps[i]]
+        adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
+        xtrain.append(np.array(adata.X))
+        sample_celltype = list(adata.obs[celltype_key])
+        ytrain = ytrain + sample_celltype
+    xtrain = np.concatenate(xtrain, axis=0)
+    xtrain = np.log1p(xtrain)
+    ytrain = np.array(ytrain)
+    # train annotator
+    print('Training cell type annotator.')
+    st =  timeit.default_timer()
+    annotator = MLPClassifier() #hidden_layer_sizes=(200,)) 
+    annotator.fit((xtrain),ytrain)
+    ed =  timeit.default_timer()
+    print('Finished. Cost ' + str(ed-st) + ' seconds.')
+    
+    
+    semicelltype = [] # cell type
+    semiids = [] # sample ids
+    sampleinfo = {} #sample information to be preserved
+    for k in sample_info_keys: # other sample information to be preserved
+        sampleinfo[k] = []
+    xinf = []
+    for i in range(batch):
+        # expression
+        sid = sids[newreps[i]]
+        repsid = sids[oldreps[oldcl[newreps[i]]]]
+        x = np.load(name + '/inferreddata/' + repsid + '_to_' + sid + '.npy')
+        xinf.append(x)
+
+        # essential keys
+        predicted_celltype = annotator.predict(np.log1p(x))
+        semicelltype = semicelltype + list(predicted_celltype)
+        for j in range(x.shape[0]):
+            semiids.append(sids[i])
+            
+        ## other keys
+        bulkdata = anndata.read_h5ad('example_data/bulkdata.h5ad')
+        for k in sample_info_keys:
+            for j in range(x.shape[0]):
+                sampleinfo[k].append(bulkdata.obs[k][i])
+                    
+                    
+    xinf = np.concatenate(xinf, axis=0)
+    
+    
+    infrepdata = anndata.AnnData(np.array(xinf))
+    infrepdata.obs[celltype_key] = semicelltype
+    infrepdata.obs['sample_ids'] = semiids
+    infrepdata.var = bulkdata.var
+    
+    for k in sample_info_keys:
+        infrepdata.obs[k] = sampleinfo[k]
+    
+    infrepdata.write(name + '/infrepdata_' + str(rnd) + '.h5ad')
+    realrepdata.write(name + '/realrepdata_' + str(rnd) + '.h5ad')
+
+    return realrepdata, infrepdata
 
 
 def compare_umaps(
@@ -323,7 +444,7 @@ def compare_umaps(
     x1 = np.log1p(x1)
     combdata = anndata.AnnData(np.concatenate([x0,x1],axis=0))
     combdata.var = gtdata.var
-    combdata.obs['celltypes'] = list(gtdata.obs['celltypes']) + list(semidata.obs['celltypes'])
+    combdata.obs[celltype_key] = list(gtdata.obs[celltype_key]) + list(semidata.obs[celltype_key])
     
     cohort = []
     for i in range(gtdata.X.shape[0]):
@@ -349,7 +470,42 @@ def compare_umaps(
     return combdata,gtdata,semidata
 
 
-
+def compare_adata_umaps(
+    semidata,
+    gtdata,                
+    name = 'testexample',
+    celltype_key = 'celltypes'
+    ):
+    
+    x0 = np.array(gtdata.X.todense())
+    x1 = np.array(semidata.X)
+    x1 = np.log1p(x1)
+    combdata = anndata.AnnData(np.concatenate([x0,x1],axis=0))
+    combdata.var = gtdata.var
+    combdata.obs[celltype_key] = list(gtdata.obs[celltype_key]) + list(semidata.obs[celltype_key])
+    
+    cohort = []
+    for i in range(gtdata.X.shape[0]):
+        cohort.append('real-profiled')
+    for i in range(semidata.X.shape[0]):
+        cohort.append('semi-profiled')
+    combdata.obs['cohort'] = cohort
+    
+    sc.pp.log1p(combdata)
+    sc.tl.pca(combdata,n_comps=100)
+    sc.pp.neighbors(combdata,n_neighbors=50)
+    sc.tl.umap(combdata)
+    
+    sc.pl.umap(combdata,color = 'cohort', title = 'Real-profiled VS Semi-profiled')
+    
+    
+    semidata.obsm['X_umap'] = combdata.obsm['X_umap'][gtdata.X.shape[0]:]
+    gtdata.obsm['X_umap'] = combdata.obsm['X_umap'][:gtdata.X.shape[0]]
+    
+    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled')
+    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled')
+    
+    return combdata,gtdata,semidata
 
 
 
