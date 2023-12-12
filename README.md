@@ -151,7 +151,7 @@ The processed single-cell data will be stored automatically in the 'sc_samples' 
 
 
 **c,**  Deep Generative Inference\
-In this step we use deep generative models to infer the single-cell data for non-representative samples using the bulk data and the representatives' single-cell data. The following infereence command can either be excuted in cohort mode for inferring all non-representatives or in single-sample mode for inferring one target sample using one representative. 
+In this step we use deep generative models to infer the single-cell data for non-representative samples using the bulk data and the representatives' single-cell data. The following inference command will train deep learning models to infer the single-cell data for all non-representative samples.
 
 
 ```shell
@@ -169,10 +169,12 @@ scsemiprofiler scinfer
 
 required arguments:
     --representatives RepresentativesID
-                            Either a `.txt` file including all the IDs of the 
+                            The path to a `.txt` file including all the 
                             representatives used in the current round of 
-                            semi-profiling when running in cohort mode, or a single 
-                            sample ID when running in single-sample mode. 
+                            semi-profiling.
+
+    --cluster ClusterLabels
+                            The path to a `.txt` file specifying the cluster membership. 
 
     --name Name
                             Project name.
@@ -180,13 +182,6 @@ required arguments:
 optional arguments:
     -h, --help              Show this help message and exit.
 
-    --cluster ClusterLabels
-                            A `.txt` file specifying the cluster membership. 
-                            Required when running in cohort mode. 
-
-    --targetid TargetID
-                            Sample ID of the target sample when running in 
-                            single-sample mode.
 
     --bulktype BulkType
                             Specify 'pseudo' for pseudobulk or 'real' for real bulk data.
@@ -258,9 +253,7 @@ scsemiprofiler scprocess
 
 required arguments:
     --representatives RepresentativesID
-                            A `.txt` file including all the IDs of the 
-                            representatives used in the current round of 
-                            semi-profiling.
+                            A `.txt` file specifying the representatives.
 
     --cluster ClusterLabels
                             A `.txt` file specifying the cluster membership. 
@@ -313,7 +306,7 @@ Firstly, the pretrains should enable the model to perform almost perfect reconst
 Then, based on the representative's cells and bulk difference, the deep generative learning model generates inferred cells for the target sample. The inferred target sample cells have a lot of overlap with the ground truth target sample cells. 
 ![flowchart](./inference_example.jpg)
 
-When the inference is finished, we also compare the results of a series of single-cell level downstream analysis using the real cohort and semi-profiled cohort. These tasks includes UMAP visualizations, cell type composition analysis, biomarkers discovery, GO enrichment analysis, PAGA, cell-cell interactions analysis, etc. The high similarity between the real-profiled version and semi-profiled version demonstrates the reliable performance of scSemiProfiler. See all the results in the notebook.
+When the inference is finished, we also compare the results of a series of single-cell level downstream analysis using the real cohort and semi-profiled cohort. These tasks include UMAP visualizations, cell type composition analysis, biomarkers discovery, GO enrichment analysis, PAGA, cell-cell interactions analysis. The high similarity between the real-profiled version and semi-profiled version demonstrates the reliable performance of scSemiProfiler. See all the results in the notebook.
 
 If budget allows, you have the options to use active learning algorithm to select more representatives and go to the next round of semi-profiling. At the end of each round, you can use the new representatives to evaluate the semi-profiling performance and decide if you can stop. See more details in the notebook. 
 
@@ -354,19 +347,13 @@ activeselect --representatives testexample/status/init_representatives.txt
 
 
 ## Results reproduction
-The three folders correspond to the everything relevant to the three cohorts we used to examine the performance of scSemiProfiler. 
+The functionalities shown in the notebook [example.ipynb](example.ipynb) can be used for producing data visualization and single-cell level downstream analysis results shown in our paper. 
 
+We also provide the original code for generating the results. The folders [COVID-19](/COVID-19), [colorectal_cancer](/colorectal_cancer), and [iMGL](/IMGL)
+contain the code we used to examine the performance of scSemiProfiler using each dataset. The pipeline_test.ipynb was used for examine the functionalities using the initial batch of samples. The semiloop.ipynb is for semi-profiling the whole cohort using the deep generative model and active learning iteratively and the other notebooks are for downstream analysis.
 
 ### Raw data availability
 The preprocessed COVID-19 dataset is from [Stephenson et al.'s study](https://www.nature.com/articles/s41591-021-01329-2) and can be downloaded from Array Express under accession number [E-MTAB-10026](https://www.ebi.ac.uk/biostudies/arrayexpress/studies/E-MTAB-10026) The cancer dataset is from [Joanito et al.'s study](https://www.nature.com/articles/s41588-022-01100-4#Sec2). The count expression matrices are available through Synapse under the accession codes [syn26844071](https://www.synapse.org/#!Synapse:syn26844071/wiki/615389) The iMGL dataset is from [Ramaswami1 et al.'s study](https://www.biorxiv.org/content/10.1101/2023.03.09.531934v1.full.pdf).The raw count iMGL bulk and single-cell data can be downloaded from Gene Expression Omnibus (GEO) repository under accesssion number [GSE226081](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE226081).
-
- 
-### Testing functionalities on a few example samples
-The pipeline_test.ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples.
-### Perform semi-profiling for a cohort
-The semiloop.ipynb is for semi-profiling the whole cohort using the deep generative model and active learning iteratively. 
-### Downstream analysis results generation
-In each folder, semiresultsanalysis.ipynb, deconv_benchmarking.ipynb, and cellchat.ipynb contain code for most downstream analysis.
 
 ## Credits
 scSemiProfiler is jointly developed by [Jingtao Wang](https://github.com/JingtaoWang22), [Gregory Fonseca](https://www.mcgill.ca/expmed/dr-gregory-fonseca-0), and [Jun Ding](https://github.com/phoenixding) from McGill University.
