@@ -349,7 +349,7 @@ activeselect --representatives testexample/status/init_representatives.txt
 ## Results reproduction
 The functionalities shown in the notebook [example.ipynb](example.ipynb) can be used for producing data visualization and single-cell level downstream analysis results shown in our paper. 
 
-We also provide the original code for generating the results. The folders [COVID-19](/COVID-19), [colorectal_cancer](/colorectal_cancer), and [iMGL](/IMGL)
+We also provide the original code for generating the results. The folders [COVID-19](/COVID-19), [colorectal_cancer](/colorectal_cancer), and [iMGL](/iMGL)
 contain the code we used to examine the performance of scSemiProfiler using each dataset. The pipeline_test.ipynb was used for examine the functionalities using the initial batch of samples. The semiloop.ipynb is for semi-profiling the whole cohort using the deep generative model and active learning iteratively and the other notebooks are for downstream analysis.
 
 ### Raw data availability
