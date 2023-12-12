@@ -62,17 +62,21 @@ Please note that for each command described below, there is an equivalent Python
 For this initial configuration step, simply provide your bulk data in `.h5ad` format and run the following command for preprocessing and clustering for selecting the initial batch of representative samples.
 
 ```shell
-usage: initsetup    [-h] --bulk BulkData --name Name [--normed Normed] 
+command line usage: 
+
+initsetup    [-h] --bulk BulkData --name Name [--normed Normed] 
                     [--geneselection GeneSelection] [--batch BatchSize]
 
 scsemiprofiler initsetup
 
 required arguments:
     --bulk BulkData
-                            Input bulk data as a `.h5ad` file. Sample IDs should be 
-                            stored in obs.['sample_ids']. Gene symbols should be 
-                            stored in var.index. Values should either be raw read 
-                            counts or normalized expression.
+                            Input bulk data as a `.h5ad` file. Sample 
+                            IDs should be stored in obs.
+                            ['sample_ids']. Gene symbols should be 
+                            stored in var.index. Values should either 
+                            be raw read counts or normalized 
+                            expression.
     --name Name
                             Project name.
 
@@ -80,25 +84,44 @@ optional arguments:
     -h, --help              Show this help message and exit.
 
     --normed Normed
-                            Whether the library size normalization has already been 
-                            done (Default: no)
+                            Whether the library size normalization has 
+                            already been done (Default: no)
 
     --geneselection GeneSelection
-                            Whether to perform highly variable gene selection: 
-                            'yes', 'no', or specify the number of top genes.
+                            Whether to perform highly variable gene 
+                            selection: 'yes', 'no', or specify the 
+                            number of top genes.
                             (Default: yes)
 
     --batch BatchSize
                             The representative sample batch size
                             (Default: 4)
 ```
+
+```
+python function usage:
+
+scSemiProfiler.initsetup.initsetup(name, bulk, normed = 'no', geneselection = 'yes', batch = 4)
+
+Parameters:
+- name ('str'): Project name. 
+- bulk ('str'): Path to bulk data. 
+- normed ('str'): Whether the data has been library size normed or not. 
+- geneselection: ('str'): Whether to perform gene selection.
+- batch ('str'): Representative selection batch size.
+
+Returns:
+- None
+```
+
 After executing, the preprocessed bulk data and clustering information will be stored automatically. 
 
 **b,** Representative Single-cell Profiling and Processing\
 This step process the single-cell data (also `.h5ad` format) for the representatives, including the standard single-cell preprocessing and several feature augmentation techniques for enhancing the learning of the deep learning model.Please provide the representatives' single-cell data in the same folder and run the following command.
 
 ```shell
-usage: scprocess [-h] --singlecell SingleCellData --name Name [--normed Normed] 
+command line usage: 
+                    scprocess [-h] --singlecell SingleCellData --name Name [--normed Normed] 
                     [--cellfilter CellFilter] [--threshold Threshold] [--geneset 
                     GeneSet] [--weight TopFeatures] [--k K]
 
@@ -106,10 +129,13 @@ scsemiprofiler scprocess
 
 required arguments:
     --singlecell SingleCellData
-                            Input new representatives' single-cell data as a `.h5ad` 
-                            file. Sample IDs should be stored in obs.['sample_ids']. 
-                            Cell IDs should be stored in obs.index. Gene symbols 
-                            should be stored in var.index. Values should either be 
+                            Input new representatives' single-cell 
+                            data as a `.h5ad` 
+                            file. Sample IDs should be stored in obs.
+                            ['sample_ids']. 
+                            Cell IDs should be stored in obs.index. 
+                            Gene symbols should be stored in var.
+                            index. Values should either be 
                             raw read counts or normalized expression.
 
     --name Name
@@ -119,33 +145,59 @@ optional arguments:
     -h, --help              Show this help message and exit.
 
     --normed Normed
-                            Whether the library size normalization has already been 
+                            Whether the library size normalization has 
+                            already been 
                             done (Default: no)
 
     --cellfilter CellFilter
-                            Whether to perform cell filtering: 'yes' or 'no'.
+                            Whether to perform cell filtering: 'yes' 
+                            or 'no'.
                             (Default: yes)
 
     --threshold Threshold
                             The threshold for removing extremely low 
-                            expressed background noise, as a proportion of the    
+                            expressed background noise, as a 
+                            proportion of the    
                             library size.
                             (Default: 1e-3)
 
     --geneset GeneSet
-                            Specify the gene set file: 'human', 'mouse', 'none', or 
+                            Specify the gene set file: 'human', 
+                            'mouse', 'none', or 
                             path to the file
                             (Default: 'human')
 
     --weight TopFeatures
-                            The proportion of top highly variable features to 
+                            The proportion of top highly variable 
+                            features to 
                             increase importance weight. 
                             (Default: 0.5)
 
     --k K
-                            K-nearest cell neighbors used for cell graph convolution.
+                            K-nearest cell neighbors used for cell 
+                            graph convolution.
                             (Default: 15)
 ```
+
+```
+python function usage:
+
+scSemiProfiler.scprocess.scprocess(name,singlecell,normed = 'no',cellfilter = 'yes',threshold = 1e-3,geneset = 'human',weight = 0.5, k = 15)
+
+Parameters:
+- name ('str'): Project name.
+- singlecell ('str'): Path to representatives' single-cell data.
+- normed ('str'): Whether the data has been library size normed or not.
+- cellfilter: ('str'): Whether to perform cell selection.
+- threshold ('float'): Threshold for background noise removal.
+- geneset ('str'): Gene set file name. 
+- weight ('float'): The proportion of top features to increase importance weight.
+- k ('int'): K for the K-NN graph built for cells.
+
+Returns:
+- None
+```
+
 The processed single-cell data will be stored automatically in the 'sc_samples' folder. Once finished, the user can proceed to the next step for single-cell inference.
 
 
@@ -155,7 +207,9 @@ In this step we use deep generative models to infer the single-cell data for non
 
 
 ```shell
-usage: scinfer [-h] -representatives RepresentativesID --name Name [--cluster 
+command line usage: 
+
+scinfer [-h] -representatives RepresentativesID --name Name [--cluster 
                 ClusterLabels] [--targetid TargetID] [--bulktype BulkType] 
                 [--lambdad lambdaD] [--pretrain1batch Pretrain1BatchSize] 
                 [--pretrain1lr Pretrain1LearningRate] [--pretrain1vae 
@@ -174,7 +228,8 @@ required arguments:
                             semi-profiling.
 
     --cluster ClusterLabels
-                            The path to a `.txt` file specifying the cluster membership. 
+                            The path to a `.txt` file specifying the 
+                            cluster membership. 
 
     --name Name
                             Project name.
@@ -184,15 +239,18 @@ optional arguments:
 
 
     --bulktype BulkType
-                            Specify 'pseudo' for pseudobulk or 'real' for real bulk data.
+                            Specify 'pseudo' for pseudobulk or 'real' 
+                            for real bulk data.
                             (Default: real)
 
     --lambdad lambdaD
-                            Scaling factor for the discriminator loss for training the VAE generator.
+                            Scaling factor for the discriminator loss 
+                            for training the VAE generator.
                             (Default: 4.0)
 
     --pretrain1batch Pretrain1BatchSize
-                            Sample Batch Size of the first pretrain stage.
+                            Sample Batch Size of the first pretrain 
+                            stage.
                             (Default: 128)
 
     --pretrain1lr Pretrain1LearningRate
@@ -200,17 +258,19 @@ optional arguments:
                             (Default: 1e-3)
 
     --pretrain1vae Pretrain1VAEEpochs
-                            The number of epochs for training the VAE generator 
-                            during the first pretrain stage.
+                            The number of epochs for training the VAE 
+                            generator during the first pretrain stage.
                             (Default: 100)
 
     --pretrain1gan Pretrain1GanIterations
-                            The number of iterations for training the generator and 
-                            discriminator jointly during the first pretrain stage.
+                            The number of iterations for training the 
+                            generator and discriminator jointly during 
+                            the first pretrain stage.
                             (Default: 100)
 
     --lambdabulkr lambdaBulkRepresentative
-                            Scaling factor for the representative bulk loss.
+                            Scaling factor for the representative bulk 
+                            loss.
                             (Default: 1.0)
 
     --pretrain2lr Pretrain2LearningRate
@@ -218,28 +278,62 @@ optional arguments:
                             (Default: 1e-4)
 
     --pretrain2vae Pretrain2VAEEpochs
-                            The number of epochs for training the VAE generator 
-                            during the second pretrain stage.
+                            The number of epochs for training the VAE 
+                            generator during the second pretrain stage.
                             (Default: 50)
 
     --pretrain2gan Pretrain2GanIterations
-                            The number of iterations for training the generator and 
-                            discriminator jointly during the second pretrain stage.
+                            The number of iterations for training the 
+                            generator and discriminator jointly during 
+                            the second pretrain stage.
                             (Default: 50)
 
     --inferepochs InferEpochs
-                            The number of epochs for training the generator in each 
-                            mini-stage during the inference.
+                            The number of epochs for training the 
+                            generator in each mini-stage during the 
+                            inference.
                             (Default: 150)
 
     --lambdabulkt lambdaBulkTarget
-                            Scaling factor for the intial target bulk loss.
+                            Scaling factor for the intial target bulk 
+                            loss.
                             (Default: 8.0)
 
     --inferlr InferLearningRate
                             Learning rate during the inference stage.
                             (Default: 2e-4)
 ```
+
+```
+python function usage:
+
+scSemiProfiler.scinfer.scinfer(name, representatives, cluster, targetid, bulktype = 'real', lambdad = 4.0, pretrain1batch = 128, pretrain1lr = 1e-3, pretrain1vae = 100, pretrain1gan = 100, lambdabulkr = 1, pretrain2lr = 1e-4, pretrain2vae = 50, pretrain2gan = 50, inferepochs = 150, lambdabulkt = 8.0, inferlr = 2e-4, device = 'cuda:0')
+
+Parameters:
+- name ('str'): Project name.
+- representatives ('str'): Path to the txt file recording this round of representative information.
+- cluster ('str'): Path to the txt file recording this round of cluster label information.
+- targetid: ('None'): Deprecated parameter for sanity check.
+- bulktype ('str'): 'psedubulk' or 'real'. (Default: 'real')
+- lambdad ('float'): Scaling factor for the discriminator loss.
+- pretrain1batch ('int'): The mini-batch size during the first pretrain stage.
+- pretrain1lr ('float'): The learning rate used in the first pretrain stage.
+- pretrain1vae ('int'): The number of epochs for training the VAE during the first pretrain stage.
+- pretrain1gan ('int'): The number of iterations for training GAN during the first pretrain stage.
+- lambdabulkr ('float'): Scaling factor for represenatative bulk loss for pretrain 2.
+- pretrain2lr ('float'): Pretrain 2 learning rate.
+- pretrain2vae ('int'): The number of epochs for training the VAE during the second pretrain stage.
+- pretrain2gan ('int'): The number of iterations for training the GAN during the second pretrain stage.
+- inferepochs ('int'): The number of epochs used for each mini-stage during inference.
+- lambdabulkt ('float'): Scaling factor for the initial target bulk loss.
+- inferlr ('float'): Infer stage learning rate.
+- device ('str'): Which device to use, e.g. 'cpu', 'cuda:0'.
+
+Returns:
+- None
+```
+
+
 The inferred data will be stored in the folder "inferreddata" automatically. Once the single-cell inference is finished for all the non-representative samples, you may choose to stop the pipeline and proceed to downstream analyses using the semi-profiled single-cell cohort. You may also proceed to step (**d**) and use active learning to select the next batch of representative samples to further improve the semi-profiling. 
 
 
@@ -247,7 +341,8 @@ The inferred data will be stored in the folder "inferreddata" automatically. Onc
 The following command generates the next round of representatives and cluster membership information and store them as `.txt` files in the "status" folder. Then you will provide single-cell data for the new representatives and execute steps (**b**) and (**c**) again to achieve better semi-profiling performance. 
 
 ```shell
-usage: activeselect [-h] --representatives RepresentativesID --cluster ClusterLabels [--batch Batch] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
+command line usage: 
+activeselect [-h] --representatives RepresentativesID --cluster ClusterLabels [--batch Batch] [--lambdasc Lambdasc] [--lambdapb Lambdapb]
 
 scsemiprofiler scprocess
 
@@ -277,9 +372,26 @@ optional arguments:
                             (Default: 1.0)
 ```
 
+```
+python function usage:
+
+scSemiProfiler.activeselection.activeselection(name, representatives, cluster, batch, lambdasc, lambdapb)
+
+Parameters:
+- name ('str'): Project name.
+- representatives ('str'): A `.txt` file specifying the representatives.
+- cluster ('str'): A `.txt` file specifying the cluster labels.
+- batch: ('int'): Representative selection batch size.
+- lambdasc ('float'): Scaling factor for the single-cell transformation difficulty from the representative to the target.
+- lambdapb ('float'): Scaling factor for the pseudobulk data.difference. 
+
+Returns:
+- None
+```
+
 
 **e,** Downstream Analyses
-Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide some examples in the 'semiresultsanalysis.ipynb' files in each public dataset folder.
+Once the semi-profiling is finished, the semi-profiled data can be used for all single-cell level downstream analysis tasks. We provide  examples in [example.ipynb](example.ipynb).
 
 ## Example
 We provide example bulk and single-cell samples in the [example_data](example_data/) folder. Please download this repository to run scSemiProfiler on them. You can use the jupyter notebook [example.ipynb](example.ipynb) or the example commands to semi-profile a small example cohort and perform some visualizations to check the semi-profiling performance. 
