@@ -101,7 +101,8 @@ optional arguments:
 ```
 python function usage:
 
-scSemiProfiler.initsetup.initsetup(name, bulk, normed = 'no', geneselection = 'yes', batch = 4)
+scSemiProfiler.initsetup.initsetup(name, bulk, normed = 'no', 
+geneselection = 'yes', batch = 4)
 
 Parameters:
 - name ('str'): Project name. 
@@ -182,7 +183,9 @@ optional arguments:
 ```
 python function usage:
 
-scSemiProfiler.scprocess.scprocess(name,singlecell,normed = 'no',cellfilter = 'yes',threshold = 1e-3,geneset = 'human',weight = 0.5, k = 15)
+scSemiProfiler.scprocess.scprocess(name,singlecell,normed = 'no',
+cellfilter = 'yes',threshold = 1e-3,geneset = 'human',weight = 0.5, 
+k = 15)
 
 Parameters:
 - name ('str'): Project name.
@@ -307,7 +310,12 @@ optional arguments:
 ```
 python function usage:
 
-scSemiProfiler.scinfer.scinfer(name, representatives, cluster, targetid, bulktype = 'real', lambdad = 4.0, pretrain1batch = 128, pretrain1lr = 1e-3, pretrain1vae = 100, pretrain1gan = 100, lambdabulkr = 1, pretrain2lr = 1e-4, pretrain2vae = 50, pretrain2gan = 50, inferepochs = 150, lambdabulkt = 8.0, inferlr = 2e-4, device = 'cuda:0')
+scSemiProfiler.scinfer.scinfer(name, representatives, cluster, 
+targetid, bulktype = 'real', lambdad = 4.0, pretrain1batch = 128, 
+pretrain1lr = 1e-3, pretrain1vae = 100, pretrain1gan = 100, 
+lambdabulkr = 1, pretrain2lr = 1e-4, pretrain2vae = 50, pretrain2gan =
+ 50, inferepochs = 150, lambdabulkt = 8.0, inferlr = 2e-4, device = 
+ 'cuda:0')
 
 Parameters:
 - name ('str'): Project name.
@@ -375,7 +383,8 @@ optional arguments:
 ```
 python function usage:
 
-scSemiProfiler.activeselection.activeselection(name, representatives, cluster, batch, lambdasc, lambdapb)
+scSemiProfiler.activeselection.activeselection(name, representatives,
+ cluster, batch, lambdasc, lambdapb)
 
 Parameters:
 - name ('str'): Project name.
