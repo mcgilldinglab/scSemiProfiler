@@ -25,7 +25,8 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 - [Usage](#Usage)
 - [Example](#Example)
 - [Results reproduction](#results-reproduction)
-- [Credits](#Credits)
+- [Credits](#credits)
+- [Contacts](#contacts)
 
 ## Prerequisites
 First, install [Anaconda](https://www.anaconda.com/). You can find specific instructions for different operating systems [here](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html).
