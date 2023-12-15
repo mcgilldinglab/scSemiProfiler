@@ -29,7 +29,7 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 - [Contacts](#contacts)
 
 ## Prerequisites
-First, install [Anaconda](https://www.anaconda.com/). You can find specific instructions for different operating systems [here](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html).
+First, install [Anaconda](https://www.anaconda.com/) for your operating system if you have not. You can find specific instructions for different operating systems [here](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html).
 
 Second, create a new conda environment and activate it:
 ```
@@ -53,7 +53,8 @@ Finally, install the version of PyTorch compatible with your devices by followin
 	```shell
 	pip install --upgrade https://github.com/mcgilldinglab/scSemiProfiler/zipball/main
     ```
-
+The installation should take less than 2 minutes.
+The [environment.txt](environment.txt) file includes information about the environment that we used to test scSemiProfiler.
 ## Usage
 In this section, we provide guidance on executing each step of scSemiProfiler with your dataset. scSemiProfiler offers two modes of operation: it can be run via the command line or imported as a Python package. 
 
