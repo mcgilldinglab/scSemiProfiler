@@ -1405,7 +1405,7 @@ class fastgenerator(
         return runner()
     
     @classmethod
-    @setup_anndata_dsp.dedent
+    #@setup_anndata_dsp.dedent
     def setup_anndata(
         cls,
         adata: AnnData,
