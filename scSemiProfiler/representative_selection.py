@@ -10,7 +10,9 @@ from sklearn.decomposition import PCA
 
 ### evaluation functions
 
-def faiss_knn(query, x, n_neighbors=1):
+def faiss_knn(query:np.array, x:np.array, n_neighbors:int=1) -> np.array:
+    
+    
     n_samples = x.shape[0]
     n_features = x.shape[1]
     x = np.ascontiguousarray(x)
@@ -180,7 +182,38 @@ def compute_cluster_heterogeneity(cluster_number=0,\
 
 
 
-def activeselection(name, representatives,cluster,batch,lambdasc,lambdapb):
+def activeselection(name:str, representatives:str,cluster:str,batch:int,lambdasc:float,lambdapb:float) -> None:
+    """
+    Use active learning to select the next batch of representatives
+    
+    Parameters
+    ----------
+    name 
+        Project name.
+    representatives
+        Path to a `.txt` file specifying the representatives.
+    cluster
+        Path to a `.txt` file specifying the cluster labels.
+    batch
+        Representative selection batch size.
+    lambdasc
+        Scaling factor for the single-cell transformation difficulty from the representative to the target.
+    lambdapb
+        Scaling factor for the pseudobulk data.difference. 
+    
+    Returns
+    -------
+        None
+    
+    Example
+    -------
+    >>> name = 'project_name'
+    >>> representatives = name + '/status/init_representatives.txt'
+    >>> cluster = name + '/status/init_cluster_labels.txt'
+    >>> semidev.activeselection(name, representatives,cluster,batch=2,lambdasc=1,lambdapb=1)
+    
+    """
+    
     
     print('Running active learning to select new representatives')
     

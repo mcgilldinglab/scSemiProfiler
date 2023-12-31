@@ -9,10 +9,41 @@ from anndata import AnnData
 import scanpy as sc
 from sklearn.neighbors import kneighbors_graph
 import gc
-from fast_generator import *
+from .fast_generator import *
+from typing import Union, Tuple
 import pickle
 
-def setdata(name,sid,device='cuda:0',k=15,diagw=1.0):
+def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> Tuple[anndata.AnnData, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    """
+    Wrapper function for any preparations that need to be done for a anndata.AnnData object before sending to the model. 
+
+    Parameters
+    ----------
+    name
+        The porject name.
+    sid
+        Sample ID of the sample to be prepared
+    device
+        CPU or GPU for model training
+    k
+        Number of neighbors to consider in the cell graph
+    diagw
+        The weight of the original cell when agregating the information
+
+    Returns
+    -------
+    adata
+        The augmented anndata object. 
+    adj
+        The adjacency matrix of the cell neighbor graph.
+    variances
+        Variances of the features
+    pseudobulk
+        pseudobulk data of the sample
+    geneset_len
+        Length of the gene set score features
+    """
+    
     adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
     
     # load geneset
@@ -46,19 +77,49 @@ def setdata(name,sid,device='cuda:0',k=15,diagw=1.0):
 
 
 
-def fastrecon(name, sid, device='cuda:0',k=15,diagw=1.0,vaesteps=100,gansteps=100,lr=1e-3,save=True,path=None):
+def fastrecon(name:str, sid:str, device:str='cuda:0',k:int=15,diagw:float=1.0,vaesteps:int=100,gansteps:int=100,lr:float = 1e-3,save:bool=True,path:str=None) -> fastgenerator:
+    """
+    Accelerated version of pretrain 1 reconstruction.
+    
+    Parameters
+    ----------
+    name
+        The porject name.
+    sid
+        Sample ID of the sample to be prepared
+    device
+        CPU or GPU for model training
+    k
+        Number of neighbors to consider in the cell graph
+    diagw
+        The weight of the original cell when agregating the information
+    vaestep:
+        Steps for training the generator
+    ganstep:
+        Steps for joint training the generator and the discriminator.
+    lr
+        Learning rate
+    save
+        Saving the model or not
+    path
+        Path for saving the model
+    
+    Returns
+    -------
+    model
+        The trained model.
+    """
     
     #set data
     adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
     # train
-    model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
-    steps=3
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*0.001},use_gpu=device)
-    for i in range(gansteps):
-        print(i,end=', ')
-        model.train(max_epochs=steps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*0.001},use_gpu=device)
-        model.train(max_epochs=steps, plan_kwargs={'lr':1e-10,'lr2':lr,'kappa':4040*0.001},use_gpu=device)
-    
+    model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
+
+    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
+        
+        
     # save model
     if save == True:
         if path == None:
@@ -75,7 +136,41 @@ def fastrecon(name, sid, device='cuda:0',k=15,diagw=1.0,vaesteps=100,gansteps=10
 
 
 # reconst stage 2
-def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaesteps=50,gansteps=50,lr=1e-4,save=True,path=None):
+def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],device='cuda:0',k=15,diagw=1.0,vaesteps=50,gansteps=50,lr=1e-4,save=True,path=None)->fastgenerator:
+    """
+    Accelerated version of pretrain 2 reconstruction.
+    
+    Parameters
+    ----------
+    name
+        The porject name.
+    sid
+        Sample ID of the sample to be prepared
+    premodel
+        Pretrained model or path to pretrained model
+    device
+        CPU or GPU for model training
+    k
+        Number of neighbors to consider in the cell graph
+    diagw
+        The weight of the original cell when agregating the information
+    vaestep:
+        Steps for training the generator
+    ganstep:
+        Steps for joint training the generator and the discriminator.
+    lr
+        Learning rate
+    save
+        Saving the model or not
+    path
+        Path for saving the model
+    
+    Returns
+    -------
+    model
+        The trained model.
+    """
+    
     adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
     
     #(4) bulk
@@ -85,9 +180,9 @@ def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaestep
     
     #(5) reconstruct pretrain
     fastgenerator.setup_anndata(adata)
-    model = fastgenerator(adj = adj,variances = variances,markermask = None,bulk=bulk,geneset_len = geneset_len,adata=adata,\
+    model = fastgenerator(variances = variances,bulk=bulk,geneset_len = geneset_len,adata=adata,\
                 n_hidden=256,n_latent=32,dropout_rate=0,countbulkweight=1,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,\
-                power=2,corrbulkweight=0,meanbias=0)
+                power=2,corrbulkweight=0)
     
     if type(premodel) == type(None):
         pass
@@ -95,11 +190,9 @@ def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaestep
         model.module.load_state_dict(premodel.module.state_dict())
     
     steps=3
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*0.001},use_gpu=device)
-    for i in range(gansteps):
-        print(i,end=', ')
-        model.train(max_epochs=steps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*0.001},use_gpu=device)
-        model.train(max_epochs=steps, plan_kwargs={'lr':1e-10,'lr2':lr,'kappa':4040*0.001},use_gpu=device)
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
+
+    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
     
     if save == True:
         if path == None:
@@ -116,10 +209,10 @@ def reconst_pretrain2(name, sid ,premodel,device='cuda:0',k=15,diagw=1.0,vaestep
 
 
 def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model0 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model0 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight =1*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                      power=2,upperbound=99999,meanbias=0)
+                      power=2,upperbound=99999)
     if type(premodel)==type('string'):
         model0.module.load_state_dict(torch.load(premodel))
     else:
@@ -131,10 +224,10 @@ def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpi
 
 
 def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model1 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model1 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 4*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound,meanbias=0)
+                     power=2,upperbound=upperbound)
     model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
     lr = 2e-4
     model1.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
@@ -142,10 +235,10 @@ def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
     return model1.history
 
 def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model2 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model2 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 16*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound,meanbias=0)
+                     power=2,upperbound=upperbound)
     model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
     lr = 2e-4
     model2.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
@@ -153,10 +246,10 @@ def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
     return model2.history
 
 def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model3 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model3 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 64*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound,meanbias=0)
+                     power=2,upperbound=upperbound)
     model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
     lr = 2e-4 
     model3.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
@@ -164,10 +257,10 @@ def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
     return model3.history
 
 def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model4 = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model4 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 128*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound,meanbias=0)
+                     power=2,upperbound=upperbound)
     model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
     lr = 2e-4 
     model4.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
@@ -175,17 +268,51 @@ def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,rep
     return model4.history
 
 def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
-    model = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                      markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound,meanbias=0)
+                     power=2,upperbound=upperbound)
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
     lr = 2e-4 
     model.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
 
-def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
+def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0) -> Tuple[ dict, np.array, fastgenerator]:
+    """
+    Accelerated version of single-cell inference for the target sample.
+    
+    Parameters
+    ----------
+    name
+        The porject name.
+    reprepid
+        Sample ID (number) of the representative
+    tgtpid
+        Sample ID (number) of the target sample
+    premodel
+        Pretrained model or path to pretrained model
+    device
+        CPU or GPU for model training
+    k
+        Number of neighbors to consider in the cell graph
+    diagw
+        The weight of the original cell when agregating the information
+    
+    Returns
+    -------
+    histdic
+        A dictionary containing the training history information
+    xsemi
+        Inferred single-cell data
+    model
+        Trained inference model
+        
+        
+    
+    """
+    
+    
     sids = []
     f = open(name + '/sids.txt','r')
     lines = f.readlines()
@@ -268,10 +395,10 @@ def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
     #histdic['bulk'] = hist['kl_global_train']
 
 
-    model = fastgenerator(adata=adata,adj=adj,variances=variances,geneset_len=geneset_len,\
-                     markermask=None,bulk=bulk,n_hidden=256,n_latent=32,\
+    model = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
+                     bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbounds[3],meanbias=0)
+                     power=2,upperbound=upperbounds[3])
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
 
     # inference
@@ -301,20 +428,79 @@ def fast_semi(name,reprepid,tgtpid,premodel,device='cuda:0',k=15,diagw=1.0):
     return histdic,xsemi,model
 
 
-def scinfer(name, representatives,cluster,targetid,bulktype,
-    lambdad = 4.0,
-    pretrain1batch = 128,
-    pretrain1lr = 1e-3,
-    pretrain1vae = 100,
-    pretrain1gan = 100,
-    lambdabulkr = 1,
-    pretrain2lr = 1e-4,
-    pretrain2vae = 50,
-    pretrain2gan = 50,
-    inferepochs = 150,
-    lambdabulkt = 8.0,
-    inferlr = 2e-4,
-    device = 'cuda:0'):
+def scinfer(name:str, representatives:str,cluster:str,targetid:str,bulktype:str='real',
+    lambdad:float = 4.0,
+    pretrain1batch:int = 128,
+    pretrain1lr:float = 1e-3,
+    pretrain1vae:int = 100,
+    pretrain1gan:int = 100,
+    lambdabulkr:float = 1,
+    pretrain2lr:float = 1e-4,
+    pretrain2vae:int = 50,
+    pretrain2gan:int = 50,
+    inferepochs:int = 150,
+    lambdabulkt:float = 8.0,
+    inferlr:float = 2e-4,
+    device:str = 'cuda:0') -> None:
+    """
+    Computationally infer the single-cell data of all non-representative samples (target samples) based on the cohort's bulk data and the representatives' single-cell data
+    
+    Parameters
+    ----------
+    name
+        The porject name.
+    representatives
+        Path to a "txt" file containing the representative sample IDs (number)
+    cluster
+        Path to a "txt" file containing the cluster label information
+    targetid
+        Deprecated parameter for debugging purpose
+    tgtpid
+        Sample ID (number) of the target sample
+    bulktype
+        Pseudobulk or real bulk data
+    lambdad
+        Scaling factor for the discriminator loss.
+    pretrain1batch 
+        The mini-batch size during the first pretrain stage.
+    pretrain1lr 
+        The learning rate used in the first pretrain stage.
+    pretrain1vae 
+        The number of epochs for training the VAE during the first pretrain stage.
+    pretrain1gan 
+        The number of iterations for training GAN during the first pretrain stage.
+    lambdabulkr 
+        Scaling factor for represenatative bulk loss for pretrain 2.
+    pretrain2lr 
+        Pretrain 2 learning rate.
+    pretrain2vae 
+        The number of epochs for training the VAE during the second pretrain stage.
+    pretrain2gan 
+        The number of iterations for training the GAN during the second pretrain stage.
+    inferepochs 
+        The number of epochs used for each mini-stage during inference.
+    lambdabulkt 
+        Scaling factor for the initial target bulk loss.
+    inferlr 
+        Infer stage learning rate.
+    device 
+        Which device to use, e.g. 'cpu', 'cuda:0'.
+
+    Returns
+    -------
+        None
+
+    Example
+    -------
+    >>> name = 'project_name'
+    >>> representatives = name + '/status/init_representatives.txt'
+    >>> cluster = name + '/status/init_cluster_labels.txt'
+    >>> scSemiProfiler.scinfer(name = name, representatives = representatives, cluster = cluster, bulktype = 'real')
+
+
+    """
+    
+    
     
     if (os.path.isdir(name + '/inferreddata')) == False:
         os.system('mkdir ' + name + '/inferreddata')
@@ -370,7 +556,7 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
             if modelfile in os.listdir(name + '/models'):
                 print('load existing pretrain 1 reconstruction model for '+sid)
                 adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
-                model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+                model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
                 model.module.load_state_dict(torch.load(path))
                 repremodels.append(model)
                 #continue
@@ -401,7 +587,7 @@ def scinfer(name, representatives,cluster,targetid,bulktype,
             if modelfile in os.listdir(name + '/models'):
                 print('load existing pretrain 2 model for ' + sid)
                 adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
-                model = fastgenerator(adj,variances,None,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+                model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
                 model.module.load_state_dict(torch.load(path))
                 repremodels2.append(model)
                 #continue

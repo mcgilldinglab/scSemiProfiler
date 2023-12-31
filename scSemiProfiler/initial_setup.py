@@ -6,7 +6,39 @@ import copy
 import numpy as np
 from sklearn.cluster import KMeans
 
-def initsetup(name, bulk,normed,geneselection,batch):
+def initsetup(name:str, bulk:str,normed:str,geneselection:str,batch:int) -> None:
+    """
+    Initial setup of the semi-profiling pipeline, including processing the bulk data, clustering for finding the initial representatives.
+    
+    Parameters
+    ----------
+    name
+        Project name. 
+    bulk
+        Path to bulk data. 
+    normed
+        Whether the data has been library size normed or not. 
+    geneselection
+        Whether to perform gene selection.
+    batch 
+        Representative selection batch size.
+    
+    Returns
+    -------
+        None
+    
+    Example
+    --------
+    >>> import scSemiProfiler
+    >>> name = 'runexample'
+    >>> bulk = 'example_data/bulkdata.h5ad'
+    >>> normed = 'yes'
+    >>> geneselection = 'no'
+    >>> batch = 2
+    >>> scSemiProfiler.initsetup(name, bulk,normed,geneselection,batch)
+
+    """
+    
     print('Start initial setup')
     
     if (os.path.isdir(name)) == False:

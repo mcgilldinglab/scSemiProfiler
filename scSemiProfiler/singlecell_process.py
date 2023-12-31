@@ -16,26 +16,24 @@ from sklearn.cluster import KMeans
 import sklearn
 from scipy import stats
 from sklearn.neighbors import kneighbors_graph
-#from datasets import AnnDataset, NumpyDataset
 from matplotlib.pyplot import figure
-#from fast_generator import *
-#from fast_functions import *
 
+from typing import Tuple
 from torch.utils.data import Dataset
-import anndata
+
 
 
 def gen_tf_gene_table(genes, tf_list, dTD):
     """
-
     Adapted from:
     Author: Jun Ding
     Project: SCDIFF2
     Ref: Ding, J., Aronow, B. J., Kaminski, N., Kitzmiller, J., Whitsett, J. A., & Bar-Joseph, Z.
     (2018). Reconstructing differentiation networks and their regulation from time series
     single-cell expression data. Genome research, 28(3), 383-395.
-
     """
+    
+
     gene_names = [g.upper() for g in genes]
     TF_names = [g.upper() for g in tf_list]
     tf_gene_table = dict.fromkeys(tf_list)
@@ -160,77 +158,29 @@ def getGeneSetMatrix(_name, genes_upper, gene_sets_path):
 
     return gene_set_matrix, keys
 
-
-
-
-class AnnDataset(Dataset):
-    def __init__(self, filepath: str, label_name: str = None, second_filepath: str = None,
-                 variable_gene_name: str = None):
-        """
-
-        Anndata dataset.
-
-        Parameters
-        ----------
-        label_name: string
-            name of the cell type annotation, default 'label'
-        second_filepath: string
-            path to another input file other than the main one; e.g. path to predicted clusters or
-            side information; only support numpy array
-
-        """
-
-        super().__init__()
-
-        self.data = sc.read(filepath, dtype='float64', backed="r")
-
-        #genes = self.data.var.index.values
-        if 'genes' in self.data.var:
-            genes = self.data.var['genes']
-        else:
-            genes = self.data.var.index 
-        self.genes_upper = [g.upper() for g in genes]
-        if label_name is not None:
-            self.clusters_true = self.data.obs[label_name].values
-        elif 'celltype' in self.data.obs:
-            self.cluusters_true = self.data.obs['celltype']
-        else:
-            self.clusters_true = None
-
-        self.N = self.data.shape[0]
-        self.G = len(self.genes_upper)
-
-        self.secondary_data = None
-        if second_filepath is not None:
-            self.secondary_data = np.load(second_filepath)
-            assert len(self.secondary_data) == self.N, "The other file have same length as the main"
-
-        if variable_gene_name is not None:
-            #_idx = np.where(self.data.var[variable_gene_name].values)[0]
-            #self.exp_variable_genes = self.data.X[:, _idx]
-            #self.variable_genes_names = self.data.var.index.values[_idx]
-            
-            
-            # jt's version
-            vgmask=[]
-            for g in genes:
-                vgmask.append(g in variable_gene_name)
-            vgmask=np.array(vgmask)
-            self.exp_variable_genes = self.data.X[:, vgmask]
-            self.variable_genes_names = variable_gene_name
-    def __len__(self):
-        return self.N
-
-    def __getitem__(self, idx):
-        main = self.data[idx].X.flatten()
-       # main = sc.pp.log1p(main)
-        if self.secondary_data is not None:
-            secondary = self.secondary_data[idx].flatten()
-            return main, secondary
-        else:
-            return main
         
-def fast_cellgraph(adata,k=15,diagw=1.0):
+def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple[anndata.AnnData, np.ndarray]:
+    """
+    Augment an anndata object using a cell neighbor graph. 
+
+    Parameters
+    ----------
+    adata
+        The dataset to be augmented
+    k
+        The number of neighbors to consider
+    diagw
+        The weight of the original cell when agregating the information
+
+    Returns
+    -------
+    adata
+        The augmented anndata object. 
+    adj
+        The adjacency matrix of the cell neighbor graph.
+    """
+    
+    
     adj = kneighbors_graph(np.array(adata.X), k, mode='connectivity', include_self=True)
     adj = adj.toarray()
     diag = np.array(np.identity(adj.shape[0]).astype('float32'))*diagw
@@ -286,7 +236,39 @@ def fast_cellgraph(adata,k=15,diagw=1.0):
 
 
     
-def scprocess(name,singlecell,normed,cellfilter,threshold,geneset,weight,k):
+def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',threshold:float = 1e-3,geneset:str = 'human',weight:float=0.5,k:int=15) -> None:
+    """
+    Process the reprsentatives' single-cell data, including preprocessing and feature augmentations.
+
+    Parameters
+    ----------
+    name
+        Project name.
+    singlecell
+        Path to representatives' single-cell data.
+    normed
+        Whether the data has been library size normed or not.
+    cellfilter
+        Whether to perform cell selection.
+    threshold
+        Threshold for background noise removal.
+    geneset
+        Gene set file name. 
+    weight
+        The proportion of top features to increase importance weight.
+    k
+        K for the K-NN graph built for cells.
+        
+    Returns
+    -------
+        None
+        
+    Example
+    -------
+    >>> scSemiProfiler.scprocess(name='project_name',singlecell=name+'/representative_sc.h5ad',normed='yes',cellfilter='no',threshold=1e-3,geneset='yes',weight='yes',k=15)
+    
+    
+    """
     
     print('Processing representative single-cell data')
     

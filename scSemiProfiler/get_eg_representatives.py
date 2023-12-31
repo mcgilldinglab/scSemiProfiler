@@ -7,7 +7,27 @@ from scipy import sparse
 
 
 
-def get_eg_representatives(name):
+def get_eg_representatives(name:str) -> None:
+    """
+    Used for acquiring representatives' single-cell data in the example. Automatically check the latest representatives and store their single-cell data as /representative_sc.h5ad under the project's directory. 
+    
+    Parameters
+    ----------
+    name 
+        Project name
+
+    Returns
+    -------
+        None
+
+    Example
+    -------
+    >>> name = 'project_name'
+    >>> scSemiProfiler.get_eg_representatives(name)
+
+    """
+    
+    
     scdata = anndata.read_h5ad('example_data/scdata.h5ad')
     sids = []
     f = open(name + '/sids.txt', 'r')

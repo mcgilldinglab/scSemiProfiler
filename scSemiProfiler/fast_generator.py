@@ -1,15 +1,17 @@
-from typing import Callable, Iterable, Optional, List, Union,Dict
 import os
-from anndata import AnnData
-import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
+from typing import Callable, Iterable, Optional, List, Union,Dict, Literal
 import collections
-from functools import partial
-from inspect import getfullargspec, signature
-
-from torch import nn as nn
-from torch.nn import ModuleList
 import logging
+
+import numpy as np
+
+import anndata
+
+
 import torch
+from torch import nn as nn
 import torch.nn.functional as F
 from torch import logsumexp
 from torch.distributions import Normal, Poisson
@@ -21,23 +23,16 @@ from torch.distributions.utils import (
     lazy_property,
     logits_to_probs)
 
+
 import scvi
-from scvi import REGISTRY_KEYS as _CONSTANTS
 from scvi import REGISTRY_KEYS
-#from scvi._compat import Literal
-from typing import Literal
 from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
-from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data, PyroBaseModuleClass 
-from scvi.model.base import  UnsupervisedTrainingMixin,ArchesMixin, BaseModelClass, RNASeqMixin, VAEMixin
-
-from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
-#from scvi.train._metrics import ElboMetric
-from scvi.train import  TrainingPlan, TrainRunner#, AdversarialTrainingPlan TrainingPlan,
-
+from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
+from scvi.model.base import  BaseModelClass, VAEMixin 
+from scvi.nn import one_hot 
+from scvi.train import  TrainingPlan, TrainRunner
 from scvi.dataloaders import DataSplitter
 from scvi.utils import setup_anndata_dsp
-from typing import Callable, Iterable, Optional
-
 from scvi.data import AnnDataManager
 from scvi.data.fields import (
     CategoricalJointObsField,
@@ -47,72 +42,49 @@ from scvi.data.fields import (
     NumericalObsField,
     ObsmField
 )
-from scvi.model._utils import _init_library_size
-from scvi.module import VAE,Classifier
-logger = logging.getLogger(__name__)
-
+from scvi.module import Classifier 
 from scvi.utils._docstrings import devices_dsp
 
-import jax
-import jax.numpy as jnp
-import optax
 
-import pytorch_lightning as pl
-
-from inspect import getfullargspec, signature
-
-#from scvi import ArchesMixin,RNASeqMixin,VAEMixin,UnsupervisedTrainingMixin
-
-
-scvi._settings.ScviConfig.seed=33
-
-
-'''
-def reparameterize_gaussian(mu, var, bound = 0.0):
-    device = mu.device
-    std_norm = Normal(torch.zeros(mu.shape),torch.ones(var.shape))
-    cdf = torch.zeros(mu.shape)-1
-    while (cdf.min() < bound) or (1-cdf.min() < bound):
-        z = std_norm.rsample()
-        cdf = std_norm.cdf(z)
-    
-    z = z.to(device)*var.sqrt() + mu
-    return z #Normal(mu, var.sqrt()).rsample()
-'''
 
 def reparameterize_gaussian(mu, var):
     return Normal(mu, var.sqrt()).rsample()
 
-def identity(x):
-    return x
 
 class FCLayers(nn.Module):
+    """
+    A helper class to build fully-connected layers for a neural network.
+    
+    Developed based on SCVI (https://scvi-tools.org/)
+    
+    Parameters
+    ----------
+    n_in
+        The dimensionality of the input
+    n_out
+        The dimensionality of the output
+    n_layers
+        The number of fully-connected hidden layers
+    n_hidden
+        The number of nodes per hidden layer
+    dropout_rate
+        Dropout rate to apply to each of the hidden layers
+    use_batch_norm
+        Whether to have `BatchNorm` layers or not
+    """
+    
     def __init__(
         self,
         n_in: int,
         n_out: int,
-        n_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
         dropout_rate: float = 0.1,
         use_batch_norm: bool = True,
-        use_layer_norm: bool = False,
-        use_activation: bool = True,
-        bias: bool = True,
-        inject_covariates: bool = True,
-        activation_fn: nn.Module = nn.ReLU,
     ):
         super().__init__()
-        self.inject_covariates = inject_covariates
         layers_dim = [n_in] + (n_layers - 1) * [n_hidden] + [n_out]
 
-        if n_cat_list is not None:
-            # n_cat = 1 will be ignored
-            self.n_cat_list = [n_cat if n_cat > 1 else 0 for n_cat in n_cat_list]
-        else:
-            self.n_cat_list = []
-
-        cat_dim = sum(self.n_cat_list)
         self.fc_layers = nn.Sequential(
             collections.OrderedDict(
                 [
@@ -120,18 +92,15 @@ class FCLayers(nn.Module):
                         "Layer {}".format(i),
                         nn.Sequential(
                             nn.Linear(
-                                n_in + cat_dim * self.inject_into_layer(i),
+                                n_in,
                                 n_out,
-                                bias=bias,
+                                bias=True,
                             ),
                             # non-default params come from defaults in original Tensorflow implementation
                             nn.BatchNorm1d(n_out, momentum=0.01, eps=0.001)
                             if use_batch_norm
                             else None,
-                            nn.LayerNorm(n_out, elementwise_affine=False)
-                            if use_layer_norm
-                            else None,
-                            activation_fn() if use_activation else None,
+                            nn.ReLU(),
                             nn.Dropout(p=dropout_rate) if dropout_rate > 0 else None,
                         ),
                     )
@@ -142,56 +111,23 @@ class FCLayers(nn.Module):
             )
         )
 
-    def inject_into_layer(self, layer_num) -> bool:
-        """Helper to determine if covariates should be injected."""
-        user_cond = layer_num == 0 or (layer_num > 0 and self.inject_covariates)
-        return user_cond
 
+    def forward(self, x: torch.Tensor):
+        """Forward computation on ``x``.
+        
+        Developed based on SCVI (https://scvi-tools.org/)
+        
+        Parameters
+        ----------
+        x
+            tensor of values with shape ``(n_in,)``
 
-    def set_online_update_hooks(self, hook_first_layer=True):
-        self.hooks = []
-
-        def _hook_fn_weight(grad):
-            categorical_dims = sum(self.n_cat_list)
-            new_grad = torch.zeros_like(grad)
-            if categorical_dims > 0:
-                new_grad[:, -categorical_dims:] = grad[:, -categorical_dims:]
-            return new_grad
-
-        def _hook_fn_zero_out(grad):
-            return grad * 0
-
-        for i, layers in enumerate(self.fc_layers):
-            for layer in layers:
-                if i == 0 and not hook_first_layer:
-                    continue
-                if isinstance(layer, nn.Linear):
-                    if self.inject_into_layer(i):
-                        w = layer.weight.register_hook(_hook_fn_weight)
-                    else:
-                        w = layer.weight.register_hook(_hook_fn_zero_out)
-                    self.hooks.append(w)
-                    b = layer.bias.register_hook(_hook_fn_zero_out)
-                    self.hooks.append(b)
-
-
-    def forward(self, x: torch.Tensor, *cat_list: int):
-
-        one_hot_cat_list = []  # for generality in this list many indices useless.
-
-        if len(self.n_cat_list) > len(cat_list):
-            raise ValueError(
-                "nb. categorical args provided doesn't match init. params."
-            )
-        for n_cat, cat in zip(self.n_cat_list, cat_list):
-            if n_cat and cat is None:
-                raise ValueError("cat not provided while n_cat != 0 in init. params.")
-            if n_cat > 1:  # n_cat = 1 will be ignored - no additional information
-                if cat.size(1) != n_cat:
-                    one_hot_cat = one_hot(cat, n_cat)
-                else:
-                    one_hot_cat = cat  # cat has already been one_hot encoded
-                one_hot_cat_list += [one_hot_cat]
+        Returns
+        -------
+        :class:`torch.Tensor`
+            tensor of shape ``(n_out,)``
+        """
+    
         for i, layers in enumerate(self.fc_layers):
             for layer in layers:
                 if layer is not None:
@@ -203,121 +139,171 @@ class FCLayers(nn.Module):
                         else:
                             x = layer(x)
                     else:
-                        if isinstance(layer, nn.Linear) and self.inject_into_layer(i):
-                            if x.dim() == 3:
-                                one_hot_cat_list_layer = [
-                                    o.unsqueeze(0).expand(
-                                        (x.size(0), o.size(0), o.size(1))
-                                    )
-                                    for o in one_hot_cat_list
-                                ]
-                            else:
-                                one_hot_cat_list_layer = one_hot_cat_list
-                            x = torch.cat((x, *one_hot_cat_list_layer), dim=-1)
                         x = layer(x)
         return x
 
 class myEncoder(nn.Module):
+    """Encode data of ``n_input`` dimensions into a latent space of ``n_output`` dimensions.
+
+    Uses a fully-connected neural network of ``n_hidden`` layers.
+
+    Developed based on SCVI (https://scvi-tools.org/)
+
+    Parameters
+    ----------
+    geneset_len
+        The length of the gene set score features
+    n_input
+        The dimensionality of the input (data space)
+    n_output
+        The dimensionality of the output (latent space)
+    n_layers
+        The number of fully-connected hidden layers
+    n_hidden
+        The number of nodes per hidden layer
+    dropout_rate
+        Dropout rate to apply to each of the hidden layers
+    var_eps
+        Minimum value for the variance;
+        used for numerical stability
+    **kwargs
+        Keyword args for :class:`~scvi.nn.FCLayers`
+    """
+
+    
+    
     def __init__(
         self,
-        adj,
-        geneset_len,
+        geneset_len: int,
         n_input: int,
         n_output: int,
-        n_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
         dropout_rate: float = 0.1,
-        distribution: str = "normal",
         var_eps: float = 1e-4,
-        var_activation: Optional[Callable] = None,
         **kwargs,
     ):
         super().__init__()
-        self.distribution = distribution
+        self.distribution = 'normal'
         self.var_eps = var_eps
         self.encoder = FCLayers(
             n_in=n_input-geneset_len,
             n_out=n_hidden,
-            n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
-            **kwargs,
         )
         
         self.g_encoder = FCLayers(
             n_in=geneset_len,
             n_out=n_hidden,
-            n_cat_list=n_cat_list,
             n_layers=n_layers+1,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
-            **kwargs,
         )
         self.geneset_len=geneset_len
         self.n_input = n_input
         self.n_hidden = n_hidden
-        self.mean_encoder = nn.Linear(2*n_hidden, n_output)
-        self.var_encoder = nn.Linear(2*n_hidden, n_output)
         
-        
-        if distribution == "ln":
-            self.z_transformation = nn.Softmax(dim=-1)
+        if geneset_len == 0:
+            self.mean_encoder = nn.Linear(n_hidden, n_output)
+            self.var_encoder = nn.Linear(n_hidden, n_output)
         else:
-            self.z_transformation = identity
-        self.var_activation = torch.exp if var_activation is None else var_activation
+            self.mean_encoder = nn.Linear(2*n_hidden, n_output)
+            self.var_encoder = nn.Linear(2*n_hidden, n_output)
+        
+        self.var_activation = torch.exp
    
 
     
-    def forward(self, x: torch.Tensor, neighborx, cellidx,selfw, *cat_list: int,bound=0.0):
-        
-        device = x.device 
-        b = x.shape[0]
-        
-        neighborx = neighborx.reshape((b,-1))
-        
+    def forward(self, x: torch.Tensor, neighborx: torch.Tensor):
+        r"""The forward computation for a single sample.
 
-        g = x[:,-self.geneset_len:]
-        g = self.g_encoder(g)
+         #. Encodes the data into latent space using the encoder network
+         #. Generates a mean \\( q_m \\) and variance \\( q_v \\)
+         #. Samples a new value from an i.i.d. multivariate normal \\( \\sim Ne(q_m, \\mathbf{I}q_v) \\)
         
-        q = self.encoder(neighborx, *cat_list)
+        Developed based on SCVI (https://scvi-tools.org/)
         
-        q = torch.cat([q,g],1)
+        Parameters
+        ----------
+        x
+            tensor with shape (n_input,)
+        neighborx
+            tensor augmented using cell neighbor graph.
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            tensors of shape ``(n_latent,)`` for mean and var, and sample
+
+        """
+        
+        b = x.shape[0]
+        if neighborx != None: # if using cell graph
+            neighborx = neighborx.reshape((b,-1))
+            q = self.encoder(neighborx)
+            
+        else:
+            q = self.encoder(x)
+
+        if self.geneset_len != 0: # if augmented by geneset
+            g = x[:,-self.geneset_len:]
+            g = self.g_encoder(g)
+            q = torch.cat([q,g],1)
+            
         q_m = self.mean_encoder(q)
         q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
         
-        latent = self.z_transformation(reparameterize_gaussian(q_m, q_v))
+        latent = reparameterize_gaussian(q_m, q_v)
         return q_m, q_v, latent
 
 
 
 # Decoder
-class myDecoderSCVI(nn.Module):
+class myDecoder(nn.Module):
+    """Decodes data from latent space of ``n_input`` dimensions into ``n_output`` dimensions.
 
+    Uses a fully-connected neural network of ``n_hidden`` layers.
+
+    Developed based on SCVI (https://scvi-tools.org/)
+
+    Parameters
+    ----------
+    geneset_len
+        The length of the gene set score features
+    n_input
+        The dimensionality of the input (latent space)
+    n_output
+        The dimensionality of the output (data space)
+    n_layers
+        The number of fully-connected hidden layers
+    n_hidden
+        The number of nodes per hidden layer
+    dropout_rate
+        Dropout rate to apply to each of the hidden layers
+    use_batch_norm
+        Whether to use batch norm in layers
+    """
+    
+    
     def __init__(
         self,
-        geneset_len : int,
+        geneset_len: int,
         n_input: int,
         n_output: int,
-        n_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
-        inject_covariates: bool = True,
         use_batch_norm: bool = False,
-        use_layer_norm: bool = False,
     ):
         super().__init__()
         self.px_decoder = FCLayers(
             n_in=n_input,
             n_out=n_hidden,
-            n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=0,
-            inject_covariates=inject_covariates,
             use_batch_norm=use_batch_norm,
-            use_layer_norm=use_layer_norm,
         )
 
         # mean gamma
@@ -331,58 +317,103 @@ class myDecoderSCVI(nn.Module):
             nn.Softmax(dim=-1),
         )
         
-        # for graph
-        
-        self.w = torch.nn.Parameter(torch.randn((n_output,n_output))/100)
-        self.proj=nn.Linear(n_output,n_output)
-        # dispersion: here we only deal with gene-cell dispersion case
-        self.px_r_decoder = nn.Linear(n_hidden, n_output)
-
         # dropout
         self.px_dropout_decoder = nn.Linear(n_hidden, n_output)
     
         self.geneset_len=geneset_len
 
     
-    def forward(
-        self, dispersion: str, z: torch.Tensor, library: torch.Tensor, glibrary: torch.Tensor, *cat_list: int ):
+    def forward(self, z: torch.Tensor, library: torch.Tensor, glibrary: torch.Tensor):
+        """The forward computation for a single sample.
 
+         #. Decodes the data from the latent space using the decoder network
+         #. Returns parameters for the ZINB distribution of expression
+
+        Developed based on SCVI (https://scvi-tools.org/)
+
+        Parameters
+        ----------
+        z :
+            tensor with shape ``(n_input,)``
+        library
+            gene expression data library size
+        glibrary
+            sum of gene set score
+
+        Returns
+        -------
+        5-tuple of :py:class:`torch.Tensor`
+            parameters for the ZINB distribution of expression and reconstructed gene set score sum
+
+        """
         # The decoder returns values for the parameters of the ZINB distribution
-        px = self.px_decoder(z, *cat_list)
+        px = self.px_decoder(z)
         
         px_scale = self.px_scale_decoder(px)
-        g_scale = self.geneset_scale_decoder(px)
-        
         px_dropout = self.px_dropout_decoder(px)
-        #self.updatew()
-        
-        #px_dropout =  px_dropout + torch.matmul(px_dropout,adj*w2)
-        # Clamp to high value: exp(12) ~ 160000 to avoid nans (computational stability)
+
         px_rate = torch.exp(library) * px_scale  # torch.clamp( , max=12)
-        #g = px_rate[:,-self.geneset_len:]
-        g = torch.exp(glibrary) * g_scale
-        px_rate = torch.cat([px_rate,g],axis=1)
         
-        px_r = self.px_r_decoder(px) if dispersion == "gene-cell" else None
+        if self.geneset_len != 0:
+            g_scale = self.geneset_scale_decoder(px)
+            g = torch.exp(glibrary) * g_scale
+            px_rate = torch.cat([px_rate,g],axis=1)
+        else:
+            g = 0
+        px_r = None
         return px_scale, px_r, px_rate, px_dropout, g
 
 
 
-
-
-
-torch.backends.cudnn.benchmark = True
+#torch.backends.cudnn.benchmark = True
 
 class myVAE(BaseModuleClass):
+    """Variational auto-encoder model.
 
+    This is an implementation of a VAE-GAN based on SCVI :cite:p:`Lopez18`.
+
+    Parameters
+    ----------
+    variances
+        Variances of input features across samples
+    bulk
+        Bulk data, i.e. the average feature values
+    geneset_len
+        Gene set scores feature length
+    adata
+        input dataset
+    n_input
+        Number of input genes
+    countbulkweight
+        Weight of bulk loss computed based on count data
+    power
+        'Temperature' factor of the loss computed
+    upperbound
+        Upperbound for gene expression values involved in the loss computation
+    n_hidden
+        Number of nodes per hidden layer
+    n_latent
+        Dimensionality of the latent space
+    n_layers
+        Number of hidden layers used for encoder and decoder NNs
+    dropout_rate
+        Dropout rate for neural networks
+    log_variational
+        Log(data+1) prior to encoding for numerical stability. Not normalization.
+    gene_likelihood
+        One of
+
+        * ``'nb'`` - Negative binomial distribution
+        * ``'zinb'`` - Zero-inflated negative binomial distribution
+    use_batch_norm
+        Whether to use batch norm in layers.
+    """
     def __init__(
         self,
-        adj,
-        variances,
-        markermask,
-        bulk,
-        geneset_len,
-        adata,
+        variances: torch.Tensor,
+        bulk: torch.Tensor,
+        geneset_len: int,
+        adata: anndata.AnnData,
         n_input: int,
         countbulkweight: float = 1,
         power:float=2,
@@ -391,41 +422,22 @@ class myVAE(BaseModuleClass):
         absbulkweight: float = 0,
         abslogbulkweight:float=0,
         corrbulkweight:float = 0,
-        meanbias:float = 0,
-        n_batch: int = 0,
-        n_labels: int = 0,
         n_hidden: int = 128,
         n_latent: int = 10,
         n_layers: int = 1,
-        n_continuous_cov: int = 0,
-        n_cats_per_cov: Optional[Iterable[int]] = None,
         dropout_rate: float = 0.1,
-        dispersion: str = "gene",
         log_variational: bool = True,
         gene_likelihood: str = "zinb",
-        latent_distribution: str = "normal",
-        encode_covariates: bool = False,
-        deeply_inject_covariates: bool = True,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
-        use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
-        use_observed_lib_size: bool = True,
-        library_log_means: Optional[np.ndarray] = None,
-        library_log_vars: Optional[np.ndarray] = None,
-        var_activation: Optional[Callable] = None,
     ):
         super().__init__()
-        self.dispersion = dispersion
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.gene_likelihood = gene_likelihood
-        # Automatically deactivate if useless
-        self.n_batch = n_batch
-        self.n_labels = n_labels
-        self.latent_distribution = latent_distribution
-        self.encode_covariates = encode_covariates
+        
+        self.latent_distribution = 'normal'
 
         self.variances = variances
-        self.markermask = markermask
         self.bulk = bulk
         self.geneset_len = geneset_len
         self._adata=adata
@@ -435,116 +447,51 @@ class myVAE(BaseModuleClass):
         self.absbulkweight=absbulkweight
         self.abslogbulkweight=abslogbulkweight
         self.corrbulkweight=corrbulkweight
-        self.meanbias=meanbias
         self.countbulkweight = countbulkweight
         self.power=power
         self.upperbound=upperbound
-        self.use_observed_lib_size = use_observed_lib_size
-        if not self.use_observed_lib_size:
-            if library_log_means is None or library_log_means is None:
-                raise ValueError(
-                    "If not using observed_lib_size, "
-                    "must provide library_log_means and library_log_vars."
-                )
-
-            self.register_buffer(
-                "library_log_means", torch.from_numpy(library_log_means).float()
-            )
-            self.register_buffer(
-                "library_log_vars", torch.from_numpy(library_log_vars).float()
-            )
 
 
-        if self.dispersion == "gene":
-            self.px_r = torch.nn.Parameter(torch.randn(n_input))
-        elif self.dispersion == "gene-batch":
-            self.px_r = torch.nn.Parameter(torch.randn(n_input-geneset_len, n_batch))
-        elif self.dispersion == "gene-label":
-            self.px_r = torch.nn.Parameter(torch.randn(n_input-geneset_len, n_labels))
-        elif self.dispersion == "gene-cell":
-            pass
-        else:
-            raise ValueError(
-                "dispersion must be one of ['gene', 'gene-batch',"
-                " 'gene-label', 'gene-cell'], but input was "
-                "{}.format(self.dispersion)"
-            )
+        self.px_r = torch.nn.Parameter(torch.randn(n_input))
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
-        use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
-        use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
-        # z encoder goes from the n_input-dimensional data to an n_latent-d
-        # latent space representation
-        n_input_encoder = n_input + n_continuous_cov * encode_covariates
-        cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
-        encoder_cat_list = cat_list if encode_covariates else None
+
+        n_input_encoder = n_input 
+        
         self.z_encoder = myEncoder(
-            adj,
             geneset_len,
             n_input_encoder,
             n_latent,
-            n_cat_list=encoder_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
-            distribution=latent_distribution,
-            inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            var_activation=var_activation,
         )
-        # l encoder goes from n_input-dimensional data to 1-d library size
-        self.l_encoder = myEncoder(
-            adj,
-            geneset_len,
-            n_input_encoder,
-            1,
-            n_layers=1,
-            n_cat_list=encoder_cat_list,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-            inject_covariates=deeply_inject_covariates,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            var_activation=var_activation,
-        )
+
         # decoder goes from n_latent-dimensional space to n_input-d data
-        n_input_decoder = n_latent + n_continuous_cov
-        self.decoder = myDecoderSCVI(
+        n_input_decoder = n_latent
+        self.decoder = myDecoder(
             geneset_len,
             n_input_decoder,
             n_input,
-            n_cat_list=cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            inject_covariates=deeply_inject_covariates,
-            use_batch_norm=use_batch_norm_decoder,
-            use_layer_norm=use_layer_norm_decoder,
+            use_batch_norm=use_batch_norm_decoder
         )
 
+        
     def _get_inference_input(self, tensors):
-        x = tensors[_CONSTANTS.X_KEY]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
-
-        cont_key = _CONSTANTS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = _CONSTANTS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+        x = tensors[REGISTRY_KEYS.X_KEY]
         
-
-        cellidx = tensors['cellidx']  # (batch)
-        cellidx = cellidx.type(torch.LongTensor)
-        #cellidx = cellidx.to(x.device)
-        
-        neighborx =  tensors['neighborx'] 
-        #neighborx = neighborx[cellidx]
-        
+        if 'neighborx' in tensors.keys():
+            neighborx =  tensors['neighborx'] 
+        else:
+            neighborx = None
         
         input_dict = dict(
-            x=x,  neighborx=neighborx, batch_index=batch_index, cont_covs=cont_covs, cat_covs=cat_covs
+            x=x,  neighborx=neighborx, geneset_len=self.geneset_len
         )
         return input_dict
 
@@ -552,65 +499,38 @@ class myVAE(BaseModuleClass):
         z = inference_outputs["z"]
         library = inference_outputs["library"]
         glibrary = inference_outputs["glibrary"]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
-        y = tensors[_CONSTANTS.LABELS_KEY]
 
-        cont_key = _CONSTANTS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = _CONSTANTS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
         input_dict = {
             "z": z,
             "library": library,
             "glibrary":glibrary,
-            "batch_index": batch_index,
-            "y": y,
-            "cont_covs": cont_covs,
-            "cat_covs": cat_covs,
         }
         return input_dict
 
-    '''
-    def _compute_local_library_params(self, batch_index):
-        """
-        Computes local library parameters.
-
-        Compute two tensors of shape (batch_index.shape[0], 1) where each
-        element corresponds to the mean and variances, respectively, of the
-        log library sizes in the batch the cell corresponds to.
-        """
-        n_batch = self.library_log_means.shape[1]
-        local_library_log_means = F.linear(
-            one_hot(batch_index, n_batch), self.library_log_means
-        )
-        local_library_log_vars = F.linear(
-            one_hot(batch_index, n_batch), self.library_log_vars
-        )
-        return local_library_log_means, local_library_log_vars'''
-
     @auto_move_data
-    def inference(self, x, neighborx, batch_index, cont_covs=None, cat_covs=None, n_samples=1,bound=0.0):
-        """
-        High level inference method.
-        Runs the inference (encoder) model.
-        """
+    def inference(self, x, neighborx, geneset_len, n_samples=1):
         
         x_ = x
-        genelen = neighborx.shape[1]
+        if neighborx != None:
+            genelen = neighborx.shape[1]
+        else:
+            genelen = x.shape[1]
         totallen = x.shape[1]
-        if self.use_observed_lib_size:
-            library = torch.log(x_[:,:genelen].sum(1)).unsqueeze(1)
-            glibrary = torch.log(x_[:,genelen:].sum(1)).unsqueeze(1)
+
+        if geneset_len>0:
+            glibrary = torch.log(x_[:,-geneset_len:].sum(1)).unsqueeze(1)
+            library = torch.log(x_[:,:-geneset_len].sum(1)).unsqueeze(1)
+        else:
+            glibrary = 0
+            library = torch.log(x_.sum(1)).unsqueeze(1)
         if self.log_variational:
             x_ = torch.log(1 + x_)
-            #neighborx = torch.log(1 + neighborx)
-            awe=1+1
+            if (neighborx != None ) and (neighborx.max() > 20):
+                neighborx = torch.log(1 + neighborx)
 
         encoder_input = x_
-        qz_m, qz_v, z =  self.z_encoder(encoder_input, neighborx, batch_index,bound) #, *categorical_input,bound)
+        qz_m, qz_v, z =  self.z_encoder(encoder_input, neighborx) 
                                  
-        ql_m, ql_v = None, None
 
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
@@ -626,8 +546,8 @@ class myVAE(BaseModuleClass):
                 (n_samples, library.size(0), library.size(1))
             )
 
-
-        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, ql_m=ql_m, ql_v=ql_v, library=library,glibrary=glibrary)
+        
+        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, library=library,glibrary=glibrary)
         return outputs
 
 
@@ -636,36 +556,16 @@ class myVAE(BaseModuleClass):
         self,
         z,
         library,
-        glibrary,
-        batch_index,
-        cont_covs=None,
-        cat_covs=None,
-        y=None,
-        transform_batch=None,
+        glibrary
     ):
-        """Runs the generative model."""
-        # TODO: refactor forward function to not rely on y
-        decoder_input = z if cont_covs is None else torch.cat([z, cont_covs], dim=-1)
-        if cat_covs is not None:
-            categorical_input = torch.split(cat_covs, 1, dim=1)
-        else:
-            categorical_input = tuple()
+        decoder_input = z 
 
-        if transform_batch is not None:
-            batch_index = torch.ones_like(batch_index) * transform_batch
 
         px_scale, px_r, px_rate, px_dropout,g = self.decoder(
-            self.dispersion, decoder_input, library, glibrary, batch_index, *categorical_input, y
+             decoder_input, library, glibrary
         )
-        if self.dispersion == "gene-label":
-            px_r = F.linear(
-                one_hot(y, self.n_labels), self.px_r
-            )  # px_r gets transposed - last dimension is nb genes
-        elif self.dispersion == "gene-batch":
-            px_r = F.linear(one_hot(batch_index, self.n_batch), self.px_r)
-        elif self.dispersion == "gene":
-            px_r = self.px_r
 
+        px_r = self.px_r
         px_r = torch.exp(px_r)
 
         return dict(
@@ -680,8 +580,7 @@ class myVAE(BaseModuleClass):
         generative_outputs,
         kl_weight: float = 1.0,
     ):
-        x = tensors[_CONSTANTS.X_KEY]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
+        x = tensors[REGISTRY_KEYS.X_KEY]
 
         qz_m = inference_outputs["qz_m"]
         qz_v = inference_outputs["qz_v"]
@@ -695,17 +594,11 @@ class myVAE(BaseModuleClass):
 
         kl_divergence_z = kl(Normal(qz_m, qz_v.sqrt()), Normal(mean, scale)).sum(dim=1)
         
-        #kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(
-        #    dim=-1
-        #)
-        
-        
         kl_divergence_l = torch.tensor(0.0, device=x.device)
         variances = self.variances
-        markermask = self.markermask
         bulk = self.bulk
         reconst_loss, bulk_loss = self.get_reconstruction_loss(x, px_scale, px_rate, px_r, px_dropout,\
-                                                    variances,markermask,bulk)
+                                                    variances,bulk)
         kl_local_for_warmup = kl_divergence_z
         kl_local_no_warmup = kl_divergence_l
 
@@ -721,9 +614,7 @@ class myVAE(BaseModuleClass):
         
 
         if (type(bulk) == type(None)):
-
             return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=kl_global)
-
         else:
             return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=bulk_loss)
             #return LossOutput(loss, reconst_loss, kl_local,bulk_loss)# kl_global)
@@ -735,9 +626,9 @@ class myVAE(BaseModuleClass):
         tensors,
         n_samples=1,
         library_size=1,
-        bound=20.0,
+        bound=10.0
     ) -> np.ndarray:
-        inference_kwargs = dict(n_samples=n_samples,bound=bound)
+        inference_kwargs = dict(n_samples=n_samples)
         inference_outputs, generative_outputs, = self.forward(
             tensors,
             inference_kwargs=inference_kwargs,
@@ -757,17 +648,71 @@ class myVAE(BaseModuleClass):
         
         return exprs.cpu(), mask  
 
+    @torch.no_grad()
+    def debugsample(
+        self,
+        tensors,
+        n_samples=1,
+        library_size=1,
+        bound=10.0,
+    ) -> np.ndarray:
+ 
+        inference_kwargs = dict(n_samples=n_samples)
+        inference_outputs, generative_outputs, = self.forward(
+            tensors,
+            inference_kwargs=inference_kwargs,
+            compute_loss=False,
+        )
+
+        px_r = generative_outputs["px_r"]
+        px_rate = generative_outputs["px_rate"]
+        px_dropout = generative_outputs["px_dropout"]
+        px_scale = generative_outputs["px_scale"]
         
+        print(px_r)
+        print(px_rate)
+        print(px_dropout)
+        
+        if self.gene_likelihood == "poisson":
+            l_train = px_rate
+            l_train = torch.clamp(l_train, max=1e8)
+            dist = torch.distributions.Poisson(
+                l_train
+            )  # Shape : (n_samples, n_cells_batch, n_genes)
+        elif self.gene_likelihood == "nb":
+            dist = NegativeBinomial(mu=px_rate, theta=px_r)
+        elif self.gene_likelihood == "zinb":
+            dist = ZeroInflatedNegativeBinomial(
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+            )
+        else:
+            raise ValueError(
+                "{} reconstruction error not handled right now".format(
+                    self.module.gene_likelihood
+                )
+            )
+        if n_samples > 1:
+            exprs = dist.sample().permute(
+                [1, 2, 0]
+            )  # Shape : (n_cells_batch, n_genes, n_samples)
+        else:
+            exprs = dist.mean #dist.sample()
+
+        return exprs.cpu()
+    
     @torch.no_grad()
     def sample(
         self,
         tensors,
         n_samples=1,
-        library_size=1,
-        bound=0.0,
+        library_size=1e4,
+        bound=None,
     ) -> np.ndarray:
  
-        inference_kwargs = dict(n_samples=n_samples,bound=bound)
+        if bound == None:
+            bound = library_size / 1e3
+    
+        inference_kwargs = dict(n_samples=n_samples)
         inference_outputs, generative_outputs, = self.forward(
             tensors,
             inference_kwargs=inference_kwargs,
@@ -803,14 +748,16 @@ class myVAE(BaseModuleClass):
             )  # Shape : (n_cells_batch, n_genes, n_samples)
         else:
             exprs = dist.mean #dist.sample()
+        
+        exprs = exprs.cpu()
+        exprs = exprs * (exprs > bound)
+        
+        return exprs
 
-        return exprs.cpu()
 
-
-    def get_reconstruction_loss(self, x, px_scale,px_rate, px_r, px_dropout, variances, markermask, bulk) -> torch.Tensor:
+    def get_reconstruction_loss(self, x, px_scale,px_rate, px_r, px_dropout, variances, bulk) -> torch.Tensor:
         if type(variances) != type(None):
             normv = variances
-            ##########markermask = markermask
             vs,idx=normv.sort()
             threshold =  vs[x.shape[1]//2] #normv.mean()
             normv = torch.tensor((normv>threshold)) 
@@ -821,8 +768,9 @@ class myVAE(BaseModuleClass):
             reconst_loss =   ZeroInflatedNegativeBinomial(
                     mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 ).log_prob(x)
-            normv = normv.reshape((1,-1))
-            #reconst_loss = reconst_loss*normv
+            if variances != None:
+                normv = normv.reshape((1,-1))
+                reconst_loss = reconst_loss*normv
             reconst_loss = -reconst_loss.sum(dim=-1)
             
         elif self.gene_likelihood == "nb":
@@ -839,51 +787,22 @@ class myVAE(BaseModuleClass):
                 ).mean
             
             
-            
-            # norm total batch mean
-            '''
-            predicted_batch_mean = (predicted_batch_mean*1e4).permute((1,0)) / predicted_batch_mean.sum(axis=-1)
-            
-            predicted_batch_mean = (predicted_batch_mean-self.meanbias)
-            predicted_batch_mean = predicted_batch_mean*(predicted_batch_mean>0)
-            
-            predicted_batch_mean = predicted_batch_mean.permute((1,0))
-            '''
-    
             predicted_batch_mean = predicted_batch_mean.mean(axis=0) # average over batch dimension
                                                                      # shape should be (gene) now 
-            
-            #print(predicted_batch_mean.shape, 111)
-            
             predicted_batch_mean = predicted_batch_mean.reshape((-1))[:-self.geneset_len]
             
-            #print(predicted_batch_mean.shape, 222)
-            
             bulk = bulk.reshape((-1))[:-self.geneset_len]
-            
-            #print(bulk.shape, 333)
             
             bulk = bulk.to(predicted_batch_mean.device)
             predicted_batch_mean = predicted_batch_mean[:len(bulk)]
             
-            #print(predicted_batch_mean.shape, 444)
-            
-            #print(predicted_batch_mean.shape)
-            
-            #print(bulk.shape)
-           # cp = torch.nn.functional.normalize(predicted_batch_mean,dim=0)
-           # cb = torch.nn.functional.normalize(bulk,dim=0)
-            
-            
             ### expression transformation for bulk loss
-            
             bulk_loss = self.countbulkweight * (predicted_batch_mean - bulk)**self.power + \
                         self.logbulkweight * torch.abs(torch.log(predicted_batch_mean+1) - torch.log(bulk+1)) +  \
                         self.absbulkweight * torch.abs(predicted_batch_mean - bulk) + \
                         self.abslogbulkweight * torch.abs(torch.log(predicted_batch_mean+1) - torch.log(bulk+1)) #+ \
                        # self.corrbulkweight * -(cp*cb).sum()/  ((cb**2).sum())**0.5 *  (((cp**2).sum())**0.5).sum()
             
-            #bulk_loss = bulk_loss * (predicted_batch_mean > self.meanbias)
             bulk_loss = bulk_loss * (predicted_batch_mean < self.upperbound)
             
             bulk_loss = bulk_loss.mean() # average over genes
@@ -899,9 +818,7 @@ class myVAE(BaseModuleClass):
     @torch.no_grad()
     @auto_move_data
     def marginal_ll(self, tensors, n_mc_samples):
-        sample_batch = tensors[_CONSTANTS.X_KEY]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
-
+        sample_batch = tensors[REGISTRY_KEYS.X_KEY]
         to_sum = torch.zeros(sample_batch.size()[0], n_mc_samples)
 
         for i in range(n_mc_samples):
@@ -945,13 +862,13 @@ class D(torch.nn.Module):
     def __init__(self,indim,hdim=128):    
         super(D,self).__init__()
         self.l1 = torch.nn.Linear(indim,2*hdim)
-        self.act1 = torch.nn.LeakyReLU()    #torch.nn.GELU()
+        self.act1 = torch.nn.LeakyReLU()    
         
         self.l11 = torch.nn.Linear(2*hdim,hdim)
         self.act11 = torch.nn.LeakyReLU()
         
         self.l2 = torch.nn.Linear(hdim,10)
-        self.act2 = torch.nn.LeakyReLU()    #torch.nn.GELU()
+        self.act2 = torch.nn.LeakyReLU()    
         self.l3 = torch.nn.Linear(10,1)
         self.sig = torch.nn.Sigmoid()
         
@@ -972,13 +889,12 @@ class D(torch.nn.Module):
 
 
 class AdversarialTrainingPlan(TrainingPlan):
-
     def __init__(
         self,
         module: BaseModuleClass,
         lr=1e-3,
         lr2=1e-3,
-        kappa = 4040*0.001,
+        kappa = 4.0,
         weight_decay=1e-6,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
@@ -992,7 +908,6 @@ class AdversarialTrainingPlan(TrainingPlan):
         lr_min: float = 0,
         adversarial_classifier: Union[bool, Classifier] = False,
         scale_adversarial_loss: Union[float, Literal["auto"]] = "auto",
-        clip = None,
         **loss_kwargs,
     ):
         super().__init__(
@@ -1014,7 +929,6 @@ class AdversarialTrainingPlan(TrainingPlan):
         self.kappa = kappa
         self.adversarial_classifier = adversarial_classifier
         self.scale_adversarial_loss = scale_adversarial_loss
-        self.clip = clip
         self.automatic_optimization = False
         
         
@@ -1032,42 +946,18 @@ class AdversarialTrainingPlan(TrainingPlan):
         using_native_amp=False,
         using_lbfgs=False
     ):
-        # update discriminator every step
+        
         if optimizer_idx == 1:
             optimizer.step(closure=optimizer_closure)
-            #for p in self.adversarial_classifier.parameters():
-            #    p.data.clamp_(-1, 1)
-            
-        # update generator every 5 steps
+
+       
         if optimizer_idx == 0:
             if True: #(batch_idx + 1) % 2 == 0:
-                # the closure (which includes the `training_step`) will be executed by `optimizer.step`
-                
-
-                    
                 optimizer.step(closure=optimizer_closure)
             else:
-                #if type(self.clip)!=type(None):
-                #    print(self.clip)
-                #    torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
-                # call the closure by itself to run `training_step` + `backward` without an optimizer step
                 optimizer_closure()
     
     
-    def configure_gradient_clipping(self, optimizer, optimizer_idx, gradient_clip_val, gradient_clip_algorithm):
-        if optimizer_idx == 0:
-            # Lightning will handle the gradient clipping
-            
-            if type(self.clip)!=type(None):
-                #print(self.clip)
-                #torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
-                self.clip_gradients(
-                    optimizer, gradient_clip_val=self.clip, gradient_clip_algorithm=gradient_clip_algorithm
-                )
-        #elif optimizer_idx == 1:
-        #    self.clip_gradients(
-        #        optimizer, gradient_clip_val=gradient_clip_val * 2, gradient_clip_algorithm=gradient_clip_algorithm
-        #    )     
 
     def training_step(self, batch, batch_idx):
         """Training step for adversarial training."""
@@ -1078,7 +968,6 @@ class AdversarialTrainingPlan(TrainingPlan):
             if self.scale_adversarial_loss == "auto"
             else self.scale_adversarial_loss
         )
-        batch_tensor = batch[REGISTRY_KEYS.BATCH_KEY]
 
         opts = self.optimizers()
         if not isinstance(opts, list):
@@ -1087,43 +976,44 @@ class AdversarialTrainingPlan(TrainingPlan):
         else:
             opt1, opt2 = opts
 
-        inference_outputs, generative_outputs, scvi_loss = self.forward(
-            batch, loss_kwargs=self.loss_kwargs
-        )
-  
-        loss = scvi_loss.loss
-        # fool classifier if doing adversarial training
-        if kappa > 0 and self.adversarial_classifier is not False:
-
-            px_scale = generative_outputs['px_scale']
-            px_r = generative_outputs['px_r']
-            px_rate = generative_outputs['px_rate']
-            px_dropout = generative_outputs['px_dropout']
-
-            dist = ZeroInflatedNegativeBinomial(
-            mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+        #print('current_epoch',self.current_epoch, self.current_epoch%6)
+        if (self.current_epoch % 6 < 3) or (self.lr2 == 0):
+            
+            inference_outputs, generative_outputs, scvi_loss = self.forward(
+                batch, loss_kwargs=self.loss_kwargs
             )
-            xh = dist.mean
 
-            valid = torch.ones(xh.size(0), 1)
-            valid = valid.type_as(xh)
-            fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
-            loss = loss + fool_loss 
+            loss = scvi_loss.loss
+            # fool classifier if doing adversarial training
+            if kappa > 0 and self.adversarial_classifier is not False:
 
-        self.log("train_loss", loss, on_epoch=True, prog_bar=True)
-        self.log("fool_loss", fool_loss, on_epoch=True)
-        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
-        opt1.zero_grad()
-        self.manual_backward(loss)
-        opt1.step()
+                px_scale = generative_outputs['px_scale']
+                px_r = generative_outputs['px_r']
+                px_rate = generative_outputs['px_rate']
+                px_dropout = generative_outputs['px_dropout']
 
-        # train adversarial classifier
-        # this condition will not be met unless self.adversarial_classifier is not False
-        if opt2 is not None:
+                dist = ZeroInflatedNegativeBinomial(
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+                )
+                xh = dist.mean
 
-            xh,__ = self.module.nb_sample(batch)
+                valid = torch.ones(xh.size(0), 1)
+                valid = valid.type_as(xh)
+                fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
+                loss = loss + fool_loss 
+
+            self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+            self.log("fool_loss", fool_loss, on_epoch=True)
+            self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
+            opt1.zero_grad()
+            self.manual_backward(loss)
+            opt1.step()
+
+        else:
+            
+            xh = self.module.sample(batch)
             xh = xh.to(self.module.device)
-            x = batch[_CONSTANTS.X_KEY]
+            x = batch[REGISTRY_KEYS.X_KEY]
             
             valid = torch.ones(x.size(0), 1)
             valid = valid.type_as(x)
@@ -1138,77 +1028,7 @@ class AdversarialTrainingPlan(TrainingPlan):
             self.manual_backward(loss)
             opt2.step()
 
-        
-
-    '''def training_step(self, batch, batch_idx, optimizer_idx=0):
-        if "kl_weight" in self.loss_kwargs:
-            self.loss_kwargs.update({"kl_weight": self.kl_weight})
-        kappa = self.kappa #4040 * 0.1
-        
-        batch_tensor = batch[REGISTRY_KEYS.BATCH_KEY]
- 
-        if optimizer_idx == 0:
-          #  self.module.train(True)
-            #self.adversarial_classifier.train(False)
-            inference_outputs, generative_outputs, scvi_loss = self.forward(
-                batch, loss_kwargs=self.loss_kwargs
-            )
-            loss = scvi_loss.loss
-            # fool classifier if doing adversarial training
-            if kappa > 0 and self.adversarial_classifier is not False:
-                
-                px_scale = generative_outputs['px_scale']
-                px_r = generative_outputs['px_r']
-                px_rate = generative_outputs['px_rate']
-                px_dropout = generative_outputs['px_dropout']
-                
-                
-                dist = ZeroInflatedNegativeBinomial(
-                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
-                )
-                xh = dist.mean
-
-                
-                valid = torch.ones(xh.size(0), 1)
-                valid = valid.type_as(xh)
-                fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
-                loss = loss + fool_loss 
-
-            self.log("train_loss", loss, on_epoch=True)
-            self.log("fool_loss", fool_loss, on_epoch=True)
             
-            #self.compute_and_log_metrics(scvi_loss, self.elbo_train,mode='train')
-            self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
-            return loss
-        
-        # train adversarial classifier
-        # this condition will not be met unless self.adversarial_classifier is not False
-        if optimizer_idx == 1:
-
-            # xh = self.module.sample(batch)
-            
-            # negative binomial version sampling
-            xh,__ = self.module.nb_sample(batch)
-            xh = xh.to(self.module.device)
-            x = batch[_CONSTANTS.X_KEY]
-            
-            valid = torch.ones(x.size(0), 1)
-            valid = valid.type_as(x)
-            fake = torch.zeros(x.size(0), 1)
-            fake = fake.type_as(x)
-
-            fake_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), fake)
-            true_loss = self.loss_adversarial_classifier(self.adversarial_classifier(x), valid)
-                                                             
-            loss = (fake_loss+true_loss)/2
-            
-            self.log("gan_loss", loss, on_epoch=True)
-            self.log("gan_true_loss", true_loss, on_epoch=True)
-            self.log("gan_fake_loss", fake_loss, on_epoch=True)
-            
-            return loss'''
-
-        
     def configure_optimizers(self):
         params1 = filter(lambda p: p.requires_grad, self.module.parameters())
   
@@ -1259,16 +1079,12 @@ class fastgenerator(
     BaseModelClass,VAEMixin
 ):
 
-
     def __init__(
         self,
-        adj,
         variances,
-        markermask,
         bulk,
         geneset_len,
-        adata: AnnData,
-        clip = None,
+        adata: anndata.AnnData,
         countbulkweight: float = 1,
         power:float = 2.0,
         upperbound:float = 99999,
@@ -1276,27 +1092,19 @@ class fastgenerator(
         absbulkweight:float=0,
         abslogbulkweight:float=0,
         corrbulkweight:float=0,
-        meanbias:float=0,
         n_hidden: int = 128,
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
-        latent_distribution: Literal["normal", "ln"] = "normal",
         **model_kwargs,
     ):
-        super(fastgenerator, self).__init__(adata)
+        super().__init__(adata)
+        #super(fastgenerator, self).__init__(adata)
 
-        n_cats_per_cov = None#(
-        #    self.scvi_setup_dict_["extra_categoricals"]["n_cats_per_key"]
-        #    if "extra_categoricals" in self.scvi_setup_dict_
-        #    else None
-        #)
+
         self.module = myVAE(
-            adj,
             variances,
-            markermask,
             bulk,
             geneset_len,
             self._adata,
@@ -1307,36 +1115,28 @@ class fastgenerator(
             absbulkweight=absbulkweight,
             abslogbulkweight=abslogbulkweight,
             corrbulkweight=corrbulkweight,
-            meanbias=meanbias,
             n_input=self.summary_stats["n_vars"],
-            n_batch=self.summary_stats["n_batch"],
-            #n_continuous_cov=self.summary_stats["n_continuous_covs"],
-            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
-            n_cats_per_cov=n_cats_per_cov,
             n_hidden=n_hidden,
             n_latent=n_latent,
             n_layers=n_layers,
             dropout_rate=dropout_rate,
-            dispersion=dispersion,
             gene_likelihood=gene_likelihood,
-            latent_distribution=latent_distribution,
             **model_kwargs,
         )
         self.adversarial_classifier = D(indim = self.module.n_input)
+        
+        
         self._model_summary_string = (
             "SCVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, dispersion: {}, gene_likelihood: {}, latent_distribution: {}"
+            "{}, gene_likelihood: {}"
         ).format(
             n_hidden,
             n_latent,
             n_layers,
             dropout_rate,
-            dispersion,
-            gene_likelihood,
-            latent_distribution,
+            gene_likelihood
         )
         self.init_params_ = self._get_init_params(locals())
-        self.clip = clip
         
         
     #@devices_dsp.dedent
@@ -1345,43 +1145,29 @@ class fastgenerator(
         max_epochs: Optional[int] = None,
         use_gpu: Optional[Union[str, int, bool]] = None,
         accelerator: str = "auto",
-        train_size: float = 1.0,
         devices: Union[int, List[int], str] = "auto",
-        validation_size: Optional[float] = None,
         shuffle_set_split: bool = True,
         batch_size: int = 128,
         early_stopping: bool = False,
         plan_kwargs: Optional[dict] = None,
         **trainer_kwargs,
     ):
-
-
-        
-
         if max_epochs is None:
             n_cells = self.adata.n_obs
             max_epochs = np.min([round((20000 / n_cells) * 400), 400])
 
-        #plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
         plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
         
         data_splitter = DataSplitter(
             self.adata_manager,
-            train_size=train_size,
-            validation_size=validation_size,
+            train_size=1.0,
+            validation_size=0,
             batch_size=batch_size,
         )
         
-
-        
-        
         training_plan = AdversarialTrainingPlan(self.module, 
-                                                adversarial_classifier=self.adversarial_classifier  ,
-                                                clip=self.clip
-                                                , **plan_kwargs)
-        
-        #training_plan = TrainingPlan(self.module, **plan_kwargs)
-        
+                                                adversarial_classifier=self.adversarial_classifier ,
+                                                **plan_kwargs)
         self.training_plan = training_plan
         
         es = "early_stopping"
@@ -1389,8 +1175,6 @@ class fastgenerator(
             early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
         )
         
-                
-        #devices=devices,
         runner = TrainRunner(
             self,
             training_plan=training_plan,
@@ -1408,57 +1192,45 @@ class fastgenerator(
     #@setup_anndata_dsp.dedent
     def setup_anndata(
         cls,
-        adata: AnnData,
+        adata: anndata.AnnData,
         layer: Optional[str] = None,
-        batch_key: Optional[str] = None,
-        labels_key: Optional[str] = None,
-        size_factor_key: Optional[str] = None,
-        categorical_covariate_keys: Optional[List[str]] = None,
-        continuous_covariate_keys: Optional[List[str]] = None,
         **kwargs,
     ):
-        """
-        %(summary)s.
-
-        Parameters
-        ----------
-        %(param_layer)s
-        %(param_batch_key)s
-        %(param_labels_key)s
-        %(param_size_factor_key)s
-        %(param_cat_cov_keys)s
-        %(param_cont_cov_keys)s
-        """
+        
         setup_method_args = cls._get_setup_method_args(**locals())
-        anndata_fields = [
-            LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
-            CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
-            CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
-            NumericalObsField(
-                REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False
-            ),
-            ObsmField(
-                'neighborx', 'neighborx'
-            ),
-            NumericalObsField(
-                'cellidx', 'cellidx'
-            ),
-            NumericalObsField(
-                'selfw', 'selfw'
-            ),
-            CategoricalJointObsField(
-                REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
-            ),
-            NumericalJointObsField(
-                REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
-            ),
-        ]
+        
+        if ('neighborx' in adata.obsm.keys()) and ('selfw' in adata.obsm.keys()):
+            anndata_fields = [
+                LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
+                ObsmField(
+                    'neighborx', 'neighborx'
+                ),
+                NumericalObsField(
+                    'selfw', selfw
+                )
+            ]
+        if ('neighborx' in adata.obsm.keys()) and ('selfw' not in adata.obsm.keys()):
+            anndata_fields = [
+                LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
+                ObsmField(
+                    'neighborx', 'neighborx'
+                )
+            ]
+        if ('neighborx' not in adata.obsm.keys()) and ('selfw' in adata.obsm.keys()):
+            anndata_fields = [
+                LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
+                NumericalObsField(
+                    'selfw', selfw
+                ),
+            ]
+        if ('neighborx' not in adata.obsm.keys()) and ('selfw' not in adata.obsm.keys()):
+            anndata_fields = [
+                LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
+            ]
+        
         adata_manager = AnnDataManager(
             fields=anndata_fields, setup_method_args=setup_method_args
         )
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
-print('scVI ready')
-
-
 
