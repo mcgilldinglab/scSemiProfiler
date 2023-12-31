@@ -44,7 +44,7 @@ Finally, install the version of PyTorch compatible with your devices by followin
 
  There are 2 options to install scSemiProfiler.  
 * __Option 1: Install from download directory__   
-	download scSemiProfiler from this repository, go to the downloaded scSemiProfiler package root directory and use pip tool to install
+	download scSemiProfiler from this repository, go to the downloaded scSemiProfiler package root directory, and use the pip tool to install
 
 	```shell
 	pip install .
@@ -57,13 +57,13 @@ Finally, install the version of PyTorch compatible with your devices by followin
 
 
 ## Results reproduction
-Results in our manuscript can be reproduced by running scSemiProfiler on the datasets we abnalyzed (see below).
+Results in our manuscript can be reproduced by running scSemiProfiler on the datasets we analyzed (see below).
 
 ### Raw data availability
-The preprocessed COVID-19 dataset is from [Stephenson et al.'s study](https://www.nature.com/articles/s41591-021-01329-2) and can be downloaded from Array Express under accession number [E-MTAB-10026](https://www.ebi.ac.uk/biostudies/arrayexpress/studies/E-MTAB-10026) The cancer dataset is from [Joanito et al.'s study](https://www.nature.com/articles/s41588-022-01100-4#Sec2). The count expression matrices are available through Synapse under the accession codes [syn26844071](https://www.synapse.org/#!Synapse:syn26844071/wiki/615389) The iMGL dataset is from [Ramaswami1 et al.'s study](https://www.biorxiv.org/content/10.1101/2023.03.09.531934v1.full.pdf).The raw count iMGL bulk and single-cell data can be downloaded from Gene Expression Omnibus (GEO) repository under accesssion number [GSE226081](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE226081).
+The preprocessed COVID-19 dataset is from [Stephenson et al.'s study](https://www.nature.com/articles/s41591-021-01329-2) and can be downloaded from Array Express under accession number [E-MTAB-10026](https://www.ebi.ac.uk/biostudies/arrayexpress/studies/E-MTAB-10026) The cancer dataset is from [Joanito et al.'s study](https://www.nature.com/articles/s41588-022-01100-4#Sec2). The count expression matrices are available through Synapse under the accession codes [syn26844071](https://www.synapse.org/#!Synapse:syn26844071/wiki/615389) The iMGL dataset is from [Ramaswami1 et al.'s study](https://www.biorxiv.org/content/10.1101/2023.03.09.531934v1.full.pdf). The raw count iMGL bulk and single-cell data can be downloaded from the Gene Expression Omnibus (GEO) repository under accession number [GSE226081](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE226081).
 
 ### Experiment details
-The three folders contains everything about an older version of scSemiProfiler we used to generate results shown in the manuscript for the three cohorts. The pipeline_test.ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples. The semiloop.ipynb in each folder is for semi-profiling the whole cohort using the deep generative model and active learning iteratively. Moreover, semiresultsanalysis.ipynb, deconv_benchmarking.ipynb, and cellchat.ipynb contain code for downstream analyses.
+The three folders contain everything about an older version of scSemiProfiler we used to generate the results shown in the manuscript for the three cohorts. The pipeline_test.ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples. The semiloop.ipynb in each folder is for semi-profiling the whole cohort using the deep generative model and active learning iteratively. Moreover, semiresultsanalysis.ipynb, deconv_benchmarking.ipynb, and cellchat.ipynb contains code for downstream analyses.
 
 ## Credits
 scSemiProfiler is jointly developed by [Jingtao Wang](https://github.com/JingtaoWang22), [Gregory Fonseca](https://www.mcgill.ca/expmed/dr-gregory-fonseca-0), and [Jun Ding](https://github.com/phoenixding) from McGill University.
