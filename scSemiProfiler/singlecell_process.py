@@ -236,9 +236,9 @@ def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple
 
 
     
-def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',threshold:float = 1e-3,geneset:str = 'human',weight:float=0.5,k:int=15) -> None:
+def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, cellfilter:bool = False, threshold:float = 1e-3, geneset:bool = True, weight:float=0.5, k:int=15) -> None:
     """
-    Process the reprsentatives' single-cell data, including preprocessing and feature augmentations.
+    Process the reprsentatives' single-cell data, including preprocessing and feature augmentations. 
 
     Parameters
     ----------
@@ -246,14 +246,16 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
         Project name.
     singlecell
         Path to representatives' single-cell data.
+    logged
+        Whether the data has been logged or not
     normed
-        Whether the data has been library size normed or not.
+        Whether the library size has been normalized or not
     cellfilter
-        Whether to perform cell selection.
+        Whether to perform standard cell filtering.
     threshold
         Threshold for background noise removal.
     geneset
-        Gene set file name. 
+        Whether to use gene set to augment gene expression features or no.
     weight
         The proportion of top features to increase importance weight.
     k
@@ -265,7 +267,7 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
         
     Example
     -------
-    >>> scSemiProfiler.scprocess(name='project_name',singlecell=name+'/representative_sc.h5ad',normed='yes',cellfilter='no',threshold=1e-3,geneset='yes',weight='yes',k=15)
+    >>> scSemiProfiler.scprocess(name = 'project_name', singlecell = name+'/representative_sc.h5ad', logged = False, normed = True, cellfilter = False, threshold=1e-3, geneset=True, weight = 0.5, k = 15)
     
     
     """
@@ -276,7 +278,7 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
     sids = np.unique(scdata.obs['sample_ids'])
     
     # cell filtering
-    if cellfilter == 'yes':
+    if cellfilter == True:
         print('Filtering cells')
         sc.pp.filter_cells(scdata, min_genes=200)
         scdata.var['mt'] = scdata.var_names.str.startswith('MT-')  # annotate the group of mitochondrial genes as 'mt'
@@ -284,7 +286,17 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
         scdata = scdata[scdata.obs.n_genes_by_counts < 2500, :]
         scdata = scdata[scdata.obs.pct_counts_mt < 5, :]
     
-    if normed == 'no':
+    if logged == True:
+        print('recovering log-transformed data to count data')
+        adata = scdata
+        bdata = anndata.AnnData((np.exp(adata.X)-1))
+        bdata.obs = adata.obs
+        bdata.var = adata.var
+        bdata.obsm = adata.obsm
+        bdata.uns = adata.uns
+        scdata = bdata
+    
+    if normed == False:
         print('Library size normalization.')
         sc.pp.normalize_total(scdata, target_sum=1e4)    
     
@@ -305,6 +317,7 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
         X = X * np.array(X>cutoff)
         nscdata = anndata.AnnData(X)
         nscdata.obs = scdata.obs
+        nscdata.obsm = scdata.obsm
         nscdata.var = scdata.var
         nscdata.uns = scdata.uns
         scdata = nscdata
@@ -317,53 +330,53 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
     if (os.path.isdir(name + '/geneset_scores')) == False:
         os.system('mkdir ' + name + '/geneset_scores')
         
-    if geneset != 'none':
-        prior_name = "c2.cp.v7.4.symbols.gmt" # "c5.go.bp.v7.4.symbols.gmt+c2.cp.v7.4.symbols.gmt+TF-DNA"
-    
+    if geneset == True:
+        prior_name = "c2.cp.v7.4.symbols.gmt" 
+        print('Computing geneset scores')
+        zps=[]
+        for sid in sids:
+            adata = scdata[scdata.obs['sample_ids'] == sid]
+            X = adata.X
 
-        
-    print('Computing geneset scores')
-    zps=[]
-    for sid in sids:
-        adata = scdata[scdata.obs['sample_ids'] == sid]
-        X = adata.X
+            gene_sets_path = "genesets/"
+            genes_upper = [g.upper() for g in list(adata.var.index)]
+            N = adata.X.shape[0]
+            G = len(genes_upper)
+            gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
 
-        gene_sets_path = "genesets/"
-        genes_upper = [g.upper() for g in list(adata.var.index)]
-        N = adata.X.shape[0]
-        G = len(genes_upper)
-        gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
-        
-        zp = X.dot(np.array(gene_set_matrix).T)
-        eps = 1e-6
-        den = (np.array(gene_set_matrix.sum(axis=1))+eps)
-        zp = (zp+eps)/den
-        zp = zp - eps/den
-        np.save(name + '/geneset_scores/' + sid,zp)
-        zps.append(zp)
-    
-    if 'hvset.npy' not in os.listdir(name):
-        zps=np.concatenate(zps,axis=0)
-        zdata = anndata.AnnData(zps)
-        sc.pp.log1p(zdata)
-        sc.pp.highly_variable_genes(zdata)
-        hvset = zdata.var.highly_variable
-        np.save(name + '/hvset.npy',hvset)
+            zp = X.dot(np.array(gene_set_matrix).T)
+            eps = 1e-6
+            den = (np.array(gene_set_matrix.sum(axis=1))+eps)
+            zp = (zp+eps)/den
+            zp = zp - eps/den
+            np.save(name + '/geneset_scores/' + sid,zp)
+            zps.append(zp)
 
+        if 'hvset.npy' not in os.listdir(name):
+            zps=np.concatenate(zps,axis=0)
+            zdata = anndata.AnnData(zps)
+            sc.pp.log1p(zdata)
+            sc.pp.highly_variable_genes(zdata)
+            hvset = zdata.var.highly_variable
+            np.save(name + '/hvset.npy',hvset)
         
-    
+        # select highly variable genes (genes in preprocessed bulk data)
+        hvgenes = np.load(name + '/hvgenes.npy', allow_pickle = True)
         
-    # select highly variable genes (genes in preprocessed bulk data)
-    hvgenes = np.load(name + '/hvgenes.npy', allow_pickle = True)
-    hvmask = []
-    for i in scdata.var.index:
-        if i in hvgenes:
-            hvmask.append(True)
-        else:
-            hvmask.append(False)
-    hvmask = np.array(hvmask)
-    scdata = scdata[:,hvmask]
-    np.save(name + '/hvmask.npy',hvmask)
+        for g in hvgenes:
+            if g not in scdata.var.index:
+                print('Error. Bulk data contains genes that are not in single-cell data. Please remove those genes from the bulk data and try again.')
+                return
+        
+        hvmask = []
+        for i in scdata.var.index:
+            if i in hvgenes:
+                hvmask.append(True)
+            else:
+                hvmask.append(False)
+        hvmask = np.array(hvmask)
+        scdata = scdata[:,hvmask]
+        np.save(name + '/hvmask.npy',hvmask)
     
 
     print('Augmenting and saving single-cell data.')
@@ -375,14 +388,17 @@ def scprocess(name:str,singlecell:str,normed:str='yes',cellfilter:str='no',thres
         adata,adj = fast_cellgraph(adata,k=k,diagw=1.0)
         
         
-        # # importance weight
-        sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
-        setmask = np.load(name + '/hvset.npy')
-        sample_geneset = sample_geneset[:,setmask]
-        sample_geneset = sample_geneset.astype('float32')
-        
-        features = np.concatenate([adata.X,sample_geneset],1)
-        
+        if geneset == True:
+            # # importance weight
+            sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
+            setmask = np.load(name + '/hvset.npy')
+            sample_geneset = sample_geneset[:,setmask]
+            sample_geneset = sample_geneset.astype('float32')
+
+            features = np.concatenate([adata.X,sample_geneset],1)
+        else:
+            features = adata.X
+            
         variances = np.var(features,axis=0)
         adata.uns['feature_var'] = variances
         

@@ -3,12 +3,8 @@ import warnings
 warnings.filterwarnings('ignore')
 from typing import Callable, Iterable, Optional, List, Union,Dict, Literal
 import collections
-import logging
-
 import numpy as np
-
 import anndata
-
 
 import torch
 from torch import nn as nn
@@ -45,6 +41,13 @@ from scvi.data.fields import (
 from scvi.module import Classifier 
 from scvi.utils._docstrings import devices_dsp
 
+
+import logging
+scvi.settings.verbosity = logging.ERROR
+scvi.settings.warnings_stacklevel = 1
+import warnings
+warnings.filterwarnings("ignore")
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 
 def reparameterize_gaussian(mu, var):
@@ -527,7 +530,7 @@ class myVAE(BaseModuleClass):
             x_ = torch.log(1 + x_)
             if (neighborx != None ) and (neighborx.max() > 20):
                 neighborx = torch.log(1 + neighborx)
-
+            #neighborx = torch.log(1 + neighborx)
         encoder_input = x_
         qz_m, qz_v, z =  self.z_encoder(encoder_input, neighborx) 
                                  
@@ -888,13 +891,15 @@ class D(torch.nn.Module):
         return x
 
 
+
 class AdversarialTrainingPlan(TrainingPlan):
+
     def __init__(
         self,
         module: BaseModuleClass,
         lr=1e-3,
         lr2=1e-3,
-        kappa = 4.0,
+        kappa = 4040*0.001,
         weight_decay=1e-6,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
@@ -902,12 +907,14 @@ class AdversarialTrainingPlan(TrainingPlan):
         lr_factor: float = 0.6,
         lr_patience: int = 30,
         lr_threshold: float = 0.0,
+        gan: bool = False,
         lr_scheduler_metric: Literal[
             "elbo_validation", "reconstruction_loss_validation", "kl_local_validation"
         ] = "elbo_validation",
         lr_min: float = 0,
         adversarial_classifier: Union[bool, Classifier] = False,
         scale_adversarial_loss: Union[float, Literal["auto"]] = "auto",
+        clip = None,
         **loss_kwargs,
     ):
         super().__init__(
@@ -924,11 +931,14 @@ class AdversarialTrainingPlan(TrainingPlan):
             lr_min=lr_min,
             **loss_kwargs,
         )
+        self.gan = gan
         self.n_output_classifier = 1
-        self.lr2=lr2
+        self.lr2 = lr2
+        self.lr = lr
         self.kappa = kappa
         self.adversarial_classifier = adversarial_classifier
         self.scale_adversarial_loss = scale_adversarial_loss
+        self.clip = clip
         self.automatic_optimization = False
         
         
@@ -946,18 +956,42 @@ class AdversarialTrainingPlan(TrainingPlan):
         using_native_amp=False,
         using_lbfgs=False
     ):
-        
+        # update discriminator every step
         if optimizer_idx == 1:
             optimizer.step(closure=optimizer_closure)
-
-       
+            #for p in self.adversarial_classifier.parameters():
+            #    p.data.clamp_(-1, 1)
+            
+        # update generator every 5 steps
         if optimizer_idx == 0:
             if True: #(batch_idx + 1) % 2 == 0:
+                # the closure (which includes the `training_step`) will be executed by `optimizer.step`
+                
+
+                    
                 optimizer.step(closure=optimizer_closure)
             else:
+                #if type(self.clip)!=type(None):
+                #    print(self.clip)
+                #    torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
+                # call the closure by itself to run `training_step` + `backward` without an optimizer step
                 optimizer_closure()
     
     
+    def configure_gradient_clipping(self, optimizer, optimizer_idx, gradient_clip_val, gradient_clip_algorithm):
+        if optimizer_idx == 0:
+            # Lightning will handle the gradient clipping
+            
+            if type(self.clip)!=type(None):
+                #print(self.clip)
+                #torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
+                self.clip_gradients(
+                    optimizer, gradient_clip_val=self.clip, gradient_clip_algorithm=gradient_clip_algorithm
+                )
+        #elif optimizer_idx == 1:
+        #    self.clip_gradients(
+        #        optimizer, gradient_clip_val=gradient_clip_val * 2, gradient_clip_algorithm=gradient_clip_algorithm
+        #    )     
 
     def training_step(self, batch, batch_idx):
         """Training step for adversarial training."""
@@ -968,6 +1002,7 @@ class AdversarialTrainingPlan(TrainingPlan):
             if self.scale_adversarial_loss == "auto"
             else self.scale_adversarial_loss
         )
+     
 
         opts = self.optimizers()
         if not isinstance(opts, list):
@@ -976,42 +1011,51 @@ class AdversarialTrainingPlan(TrainingPlan):
         else:
             opt1, opt2 = opts
 
-        #print('current_epoch',self.current_epoch, self.current_epoch%6)
-        if (self.current_epoch % 6 < 3) or (self.lr2 == 0):
-            
-            inference_outputs, generative_outputs, scvi_loss = self.forward(
-                batch, loss_kwargs=self.loss_kwargs
+        inference_outputs, generative_outputs, scvi_loss = self.forward(
+            batch, loss_kwargs=self.loss_kwargs
+        )
+  
+        loss = scvi_loss.loss
+        # fool classifier if doing adversarial training
+        if kappa > 0 and self.adversarial_classifier is not False:
+
+            px_scale = generative_outputs['px_scale']
+            px_r = generative_outputs['px_r']
+            px_rate = generative_outputs['px_rate']
+            px_dropout = generative_outputs['px_dropout']
+
+            dist = ZeroInflatedNegativeBinomial(
+            mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
             )
+            xh = dist.mean
 
-            loss = scvi_loss.loss
-            # fool classifier if doing adversarial training
-            if kappa > 0 and self.adversarial_classifier is not False:
-
-                px_scale = generative_outputs['px_scale']
-                px_r = generative_outputs['px_r']
-                px_rate = generative_outputs['px_rate']
-                px_dropout = generative_outputs['px_dropout']
-
-                dist = ZeroInflatedNegativeBinomial(
-                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
-                )
-                xh = dist.mean
-
-                valid = torch.ones(xh.size(0), 1)
-                valid = valid.type_as(xh)
-                fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
-                loss = loss + fool_loss 
-
-            self.log("train_loss", loss, on_epoch=True, prog_bar=True)
-            self.log("fool_loss", fool_loss, on_epoch=True)
-            self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
-            opt1.zero_grad()
-            self.manual_backward(loss)
-            opt1.step()
-
-        else:
+            valid = torch.ones(xh.size(0), 1)
+            valid = valid.type_as(xh)
+            fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
+            loss = loss + fool_loss 
             
-            xh = self.module.sample(batch)
+        if self.gan:
+            prog_bar = False
+        else:
+            prog_bar = True
+        
+        self.log("train_loss", loss, on_epoch=True, prog_bar=prog_bar)
+        self.log("fool_loss", fool_loss, on_epoch=True)
+        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
+        opt1.zero_grad()
+        self.manual_backward(loss)
+        opt1.step()
+        
+        if self.lr > 1e-5:
+            f = open('fast_generator_train.txt','a')
+            f.write('1, '+str(loss) + ',  '+str(fool_loss) + '\n')
+            f.close()
+
+        # train adversarial classifier
+        # this condition will not be met unless self.adversarial_classifier is not False
+        if opt2 is not None:
+
+            xh,__ = self.module.nb_sample(batch)
             xh = xh.to(self.module.device)
             x = batch[REGISTRY_KEYS.X_KEY]
             
@@ -1028,7 +1072,12 @@ class AdversarialTrainingPlan(TrainingPlan):
             self.manual_backward(loss)
             opt2.step()
 
-            
+            if self.lr2 > 1e-5:
+                f = open('fast_generator_train.txt','a')
+                f.write('2, '+str(loss) + ',  '+str(fool_loss) + '\n')
+                f.close()
+
+        
     def configure_optimizers(self):
         params1 = filter(lambda p: p.requires_grad, self.module.parameters())
   
@@ -1072,8 +1121,8 @@ class AdversarialTrainingPlan(TrainingPlan):
                 return opts
 
         return config1
-
     
+
     
 class fastgenerator(
     BaseModelClass,VAEMixin
@@ -1102,7 +1151,7 @@ class fastgenerator(
         super().__init__(adata)
         #super(fastgenerator, self).__init__(adata)
 
-
+        self.geneset_len = geneset_len
         self.module = myVAE(
             variances,
             bulk,
@@ -1124,7 +1173,6 @@ class fastgenerator(
             **model_kwargs,
         )
         self.adversarial_classifier = D(indim = self.module.n_input)
-        
         
         self._model_summary_string = (
             "SCVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
@@ -1150,6 +1198,7 @@ class fastgenerator(
         batch_size: int = 128,
         early_stopping: bool = False,
         plan_kwargs: Optional[dict] = None,
+        gan = False,
         **trainer_kwargs,
     ):
         if max_epochs is None:
@@ -1165,15 +1214,27 @@ class fastgenerator(
             batch_size=batch_size,
         )
         
+        #training_plan = AdversarialTrainingPlan(self.module, 
+        #                                        indim = self._adata.X.shape[1], #- self.geneset_len,
+        #                                        adversarial_classifier=self.adversarial_classifier ,
+        #                                        **plan_kwargs)
+        
         training_plan = AdversarialTrainingPlan(self.module, 
-                                                adversarial_classifier=self.adversarial_classifier ,
-                                                **plan_kwargs)
+                                        adversarial_classifier = self.adversarial_classifier,
+                                        gan = gan,
+                                        **plan_kwargs)
+        
         self.training_plan = training_plan
         
         es = "early_stopping"
         trainer_kwargs[es] = (
             early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
         )
+        
+        #if gan:
+            
+            #trainer_kwargs['enable_progress_bar'] = False
+            #trainer_kwargs['logger'] = NoOpLogger()
         
         runner = TrainRunner(
             self,

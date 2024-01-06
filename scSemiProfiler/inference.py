@@ -13,6 +13,18 @@ from .fast_generator import *
 from typing import Union, Tuple
 import pickle
 
+import warnings
+import logging
+warnings.filterwarnings("ignore")
+import warnings
+import logging
+import pytorch_lightning as pl
+#logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+logging.getLogger("pytorch_lightning").setLevel(logging.CRITICAL)
+
+
+#from .vaegan import *
+
 def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> Tuple[anndata.AnnData, torch.Tensor, torch.Tensor, torch.Tensor, int]:
     """
     Wrapper function for any preparations that need to be done for a anndata.AnnData object before sending to the model. 
@@ -47,18 +59,21 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
     adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
     
     # load geneset
-    sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
-    setmask = np.load(name + '/hvset.npy')
-    sample_geneset = sample_geneset[:,setmask]
-    sample_geneset = sample_geneset.astype('float32')
-    geneset_len = sample_geneset.shape[1]
-    
-    features = np.concatenate([adata.X,sample_geneset],1)
-    bdata = anndata.AnnData(features,dtype='float32')
-    bdata.obs = adata.obs
-    bdata.obsm = adata.obsm
-    bdata.uns = adata.uns
-    adata = bdata.copy()
+    if 'geneset_scores' in os.listdir(name):    
+        sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
+        setmask = np.load(name + '/hvset.npy')
+        sample_geneset = sample_geneset[:,setmask]
+        sample_geneset = sample_geneset.astype('float32')
+        geneset_len = sample_geneset.shape[1]
+
+        features = np.concatenate([adata.X,sample_geneset],1)
+        bdata = anndata.AnnData(features,dtype='float32')
+        bdata.obs = adata.obs
+        bdata.obsm = adata.obsm
+        bdata.uns = adata.uns
+        adata = bdata.copy()
+    else:
+        geneset_len = 0
     
     # adj for cell graph
     adj = adata.obsm['adj']
@@ -112,13 +127,23 @@ def fastrecon(name:str, sid:str, device:str='cuda:0',k:int=15,diagw:float=1.0,va
     
     #set data
     adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
+    #print(0)
+    #print(variances.shape)
+    #print(adata)
+    
     # train
     model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
 
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
-
-    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
-        
+    #model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
+    #model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
+    steps=3
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4},use_gpu=device)
+    print('start pertrain 1 adversarial training:')
+    for i in range(gansteps):
+        print(i,end=', ')
+        model.train(max_epochs=steps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4},gan = True,use_gpu=device)
+        model.train(max_epochs=steps, plan_kwargs={'lr':1e-10,'lr2':lr,'kappa':4},gan = True,use_gpu=device)
+       
         
     # save model
     if save == True:
@@ -189,10 +214,18 @@ def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],devic
     else:
         model.module.load_state_dict(premodel.module.state_dict())
     
-    steps=3
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
 
-    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
+    #model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
+    #model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
+    steps=3
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4},use_gpu=device)
+    print('start pertrain 2 adversarial training:')
+    for i in range(gansteps):
+        print(i,end=', ')
+        model.train(max_epochs=steps, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4},gan = True,use_gpu=device)
+        model.train(max_epochs=steps, plan_kwargs={'lr':1e-10,'lr2':lr,'kappa':4},gan = True,use_gpu=device)
+    
+    
     
     if save == True:
         if path == None:
@@ -278,7 +311,7 @@ def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid
     torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
 
-def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0) -> Tuple[ dict, np.array, fastgenerator]:
+def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0,bulktype='pseudobulk') -> Tuple[ dict, np.array, fastgenerator]:
     """
     Accelerated version of single-cell inference for the target sample.
     
@@ -298,6 +331,8 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
         Number of neighbors to consider in the cell graph
     diagw
         The weight of the original cell when agregating the information
+    bulktype
+        'real' or 'pseudobulk'
     
     Returns
     -------
@@ -307,7 +342,6 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
         Inferred single-cell data
     model
         Trained inference model
-        
         
     
     """
@@ -330,13 +364,32 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     genelen = len(np.load(name+'/hvgenes.npy',allow_pickle=True))
     
     #(5) tgt bulk
-    bulkdata = anndata.read_h5ad(name + '/processed_bulkdata.h5ad')
-    tgtbulk = np.exp(bulkdata.X[tgtpid]) - 1
-    tgtbulk = np.array(tgtbulk).reshape((1,-1))
-    bulk = adata.X.mean(axis=0)
-    bulk = np.array(bulk).reshape((1,-1))
-    bulk[:,:tgtbulk.shape[1]] = tgtbulk
-    bulk = torch.tensor(bulk).to(device)
+    if bulktype == 'real':
+        tgtbulkdata = anndata.read_h5ad(name + '/processed_bulkdata.h5ad')
+        tgtbulk = np.exp(tgtbulkdata.X[tgtpid]) - 1
+        repbulk = np.exp(tgtbulkdata.X[reprepid]) - 1
+        tgtrealbulk = np.array(tgtbulk).reshape((1,-1))  # target real bulk
+        reprealbulk = np.array(repbulk).reshape((1,-1))  # representative real bulk
+        
+        pseudobulk = (np.array(adata.X)).mean(axis=0)
+        pseudobulk = pseudobulk.reshape((1,-1))
+        ratio = np.array((tgtrealbulk+0.1)/(reprealbulk+0.1))
+        ratio = np.concatenate([ratio,np.ones((1, pseudobulk.shape[1]-ratio.shape[1]))],axis=1)
+        bulk = pseudobulk * ratio
+        bulk = torch.tensor(bulk).to(device)
+        
+    elif (bulktype == 'pseudobulk') or (bulktype == 'pseudo'):
+        bulkdata = anndata.read_h5ad(name + '/processed_bulkdata.h5ad')
+        tgtbulk = np.exp(bulkdata.X[tgtpid]) - 1
+        tgtbulk = np.array(tgtbulk).reshape((1,-1))
+        bulk = adata.X.mean(axis=0)
+        bulk = np.array(bulk).reshape((1,-1))
+        bulk[:,:tgtbulk.shape[1]] = tgtbulk
+        bulk = torch.tensor(bulk).to(device)
+    
+    else:
+        print('Error. Please specify bulktype as "pseudobulk" or "real".')
+        return
     
     batch_size=int(np.min([adata.X.shape[0],9000]))
     
@@ -428,7 +481,151 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     return histdic,xsemi,model
 
 
-def scinfer(name:str, representatives:str,cluster:str,targetid:str,bulktype:str='real',
+def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulktype:str='pseudobulk',
+    lambdad:float = 4.0,
+    pretrain1batch:int = 128,
+    pretrain1lr:float = 1e-3,
+    pretrain1vae:int = 100,
+    pretrain1gan:int = 100,
+    lambdabulkr:float = 1,
+    pretrain2lr:float = 1e-4,
+    pretrain2vae:int = 50,
+    pretrain2gan:int = 50,
+    inferepochs:int = 150,
+    lambdabulkt:float = 8.0,
+    inferlr:float = 2e-4,
+    device:str = 'cuda:0') -> None:
+    """
+    Computationally infer the single-cell data of a single non-representative target sample based on a representatives' single-cell data and bulk data of both samples. 
+    
+    Parameters
+    ----------
+    name
+        The project name.
+    representative
+        The representative. Either indicated using sample ID (str) or the i-th (int) sample.
+    target
+        The target sample. Either indicated using sample ID (str) or the i-th (int) sample.
+    bulktype
+        Pseudobulk or real bulk data
+    lambdad
+        Scaling factor for the discriminator loss.
+    pretrain1batch 
+        The mini-batch size during the first pretrain stage.
+    pretrain1lr 
+        The learning rate used in the first pretrain stage.
+    pretrain1vae 
+        The number of epochs for training the VAE during the first pretrain stage.
+    pretrain1gan 
+        The number of iterations for training GAN during the first pretrain stage.
+    lambdabulkr 
+        Scaling factor for represenatative bulk loss for pretrain 2.
+    pretrain2lr 
+        Pretrain 2 learning rate.
+    pretrain2vae 
+        The number of epochs for training the VAE during the second pretrain stage.
+    pretrain2gan 
+        The number of iterations for training the GAN during the second pretrain stage.
+    inferepochs 
+        The number of epochs used for each mini-stage during inference.
+    lambdabulkt 
+        Scaling factor for the initial target bulk loss.
+    inferlr 
+        Infer stage learning rate.
+    device 
+        Which device to use, e.g. 'cpu', 'cuda:0'.
+
+    Returns
+    -------
+        None
+
+    Example
+    -------
+    >>> name = 'project_name'
+    >>> scSemiProfiler.tgtinfer(name = name, representatives = 6, target = 7, bulktype = 'real')
+
+    """
+    
+    
+    
+    if (os.path.isdir(name + '/inferreddata')) == False:
+        os.system('mkdir ' + name + '/inferreddata')
+    if (os.path.isdir(name + '/models')) == False:
+        os.system('mkdir ' + name + '/models')
+    if (os.path.isdir(name + '/tmp')) == False:
+        os.system('mkdir ' + name + '/tmp')
+    if (os.path.isdir(name + '/history')) == False:
+        os.system('mkdir '+ name + '/history')
+    
+    device = device
+    
+    
+    k = 15
+    diagw = 1.0
+
+    sids = []
+    f = open(name + '/sids.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
+
+
+    if type(representative) == type(123):
+        rp = sids[representative]
+    else:
+        rp = representative
+    
+    if type(target) == type(123):
+        tgt = sids[target]
+    else:
+        tgt = target
+    tgtpid = sids.index(tgt)
+    reprepid = sids.index(rp)
+        
+    print('pretrain 1: representative reconstruction')
+            
+    # if exists, load model
+    modelfile = 'fast_reconst1_' + rp
+    path = name + '/models/fast_reconst1_' + rp
+    if modelfile in os.listdir(name + '/models'):
+        print('load existing pretrain 1 reconstruction model for ' + rp)
+        adata,adj,variances,bulk,geneset_len = setdata(name,rp,device,k,diagw)
+        model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+        model.module.load_state_dict(torch.load(path))
+        repremodel = model
+        #continue
+    else:
+        # otherwise, train model
+        repremodel = fastrecon(name=name,sid=rp,device=device,k=15,diagw=1,vaesteps=int(pretrain1vae),gansteps=int(pretrain1gan),save=True,path=None)\
+                    
+
+        
+    print('pretrain2: reconstruction with representative bulk loss')
+    modelfile = 'fastreconst2_' + rp
+    path = name + '/models/fastreconst2_' + rp 
+    if modelfile in os.listdir(name + '/models'):
+        print('load existing pretrain 2 model for ' + rp)
+        adata,adj,variances,bulk,geneset_len = setdata(name,rp,device,k,diagw)
+        model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+        model.module.load_state_dict(torch.load(path))
+        repremodels2 = model
+    else:
+        repremodels2 = (reconst_pretrain2(name,rp,repremodel,device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True))
+
+    
+
+    fname = rp + '_to_' + tgt + '.npy'
+    if fname in os.listdir(name+'/inferreddata/'):
+        print('Inference for '+tgt+' has been finished previously. Skip.')
+
+    premodel = repremodels2
+    histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0, bulktype = bulktype)
+    print('Finished target sample single-cell inference')
+    return
+
+
+def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
     lambdad:float = 4.0,
     pretrain1batch:int = 128,
     pretrain1lr:float = 1e-3,
@@ -448,15 +645,11 @@ def scinfer(name:str, representatives:str,cluster:str,targetid:str,bulktype:str=
     Parameters
     ----------
     name
-        The porject name.
+        The project name.
     representatives
         Path to a "txt" file containing the representative sample IDs (number)
     cluster
         Path to a "txt" file containing the cluster label information
-    targetid
-        Deprecated parameter for debugging purpose
-    tgtpid
-        Sample ID (number) of the target sample
     bulktype
         Pseudobulk or real bulk data
     lambdad
@@ -495,11 +688,9 @@ def scinfer(name:str, representatives:str,cluster:str,targetid:str,bulktype:str=
     >>> name = 'project_name'
     >>> representatives = name + '/status/init_representatives.txt'
     >>> cluster = name + '/status/init_cluster_labels.txt'
-    >>> scSemiProfiler.scinfer(name = name, representatives = representatives, cluster = cluster, bulktype = 'real')
-
+    >>> scSemiProfiler.scinfer(name = name, representatives = representatives, cluster = cluster, bulktype = 'pseudobulk')
 
     """
-    
     
     
     if (os.path.isdir(name + '/inferreddata')) == False:
@@ -516,130 +707,123 @@ def scinfer(name:str, representatives:str,cluster:str,targetid:str,bulktype:str=
     
     k = 15
     diagw = 1.0
-    if (representatives[-3:] == 'txt') or type(representatives)==type([]):
-        print('Start single-cell inference in cohort mode')
-        
-        
-        sids = []
-        f = open(name + '/sids.txt','r')
-        lines = f.readlines()
-        for l in lines:
-            sids.append(l.strip())
-        f.close()
+
+    
+    print('Start single-cell inference in cohort mode')
+
+    sids = []
+    f = open(name + '/sids.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
 
 
-        repres = []
-        f=open(representatives,'r')
-        lines = f.readlines()
-        f.close()
-        for l in lines:
-            repres.append(int(l.strip()))
+    repres = []
+    f=open(representatives,'r')
+    lines = f.readlines()
+    f.close()
+    for l in lines:
+        repres.append(int(l.strip()))
 
-        cluster_labels = []
-        f=open(cluster,'r')
-        lines = f.readlines()
-        f.close()
-        for l in lines:
-            cluster_labels.append(int(l.strip()))
-        
-        #timing
-        pretrain1start = timeit.default_timer()
-        
-        print('pretrain 1: representative reconstruction')
-        repremodels = []
-        for rp in repres:
-            sid = sids[rp]
-            
-            # if exists, load model
-            modelfile = 'fast_reconst1_' + sid
-            path = name + '/models/fast_reconst1_'+sid
-            if modelfile in os.listdir(name + '/models'):
-                print('load existing pretrain 1 reconstruction model for '+sid)
-                adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
-                model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
-                model.module.load_state_dict(torch.load(path))
-                repremodels.append(model)
-                #continue
-            else:
-                # otherwise, train model
-                repremodels.append(\
-                                   fastrecon(name=name,sid=sid,device=device,k=15,diagw=1,vaesteps=int(pretrain1vae),gansteps=int(pretrain1gan),save=True,path=None)\
-                                  )
+    cluster_labels = []
+    f=open(cluster,'r')
+    lines = f.readlines()
+    f.close()
+    for l in lines:
+        cluster_labels.append(int(l.strip()))
 
-        # timing
-        pretrain1end = timeit.default_timer()
-        f=open('pretrain1time.txt','w')
-        f.write(str(pretrain1end-pretrain1start))
-        f.close()
+    #timing
+    pretrain1start = timeit.default_timer()
+
+    print('pretrain 1: representative reconstruction')
+    repremodels = []
+    for rp in repres:
+        sid = sids[rp]
+
+        # if exists, load model
+        modelfile = 'fast_reconst1_' + sid
+        path = name + '/models/fast_reconst1_'+sid
+        if modelfile in os.listdir(name + '/models'):
+            print('load existing pretrain 1 reconstruction model for '+sid)
+            adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
+            model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+            model.module.load_state_dict(torch.load(path))
+            repremodels.append(model)
+            #continue
+        else:
+            # otherwise, train model
+            repremodels.append(\
+                               fastrecon(name=name,sid=sid, \
+                                         device=device,k=15,\
+                                         diagw=1,vaesteps=int(pretrain1vae),\
+                                         gansteps=int(pretrain1gan),save=True,path=None)\
+                              )
+
+    # timing
+    pretrain1end = timeit.default_timer()
+    f=open('pretrain1time.txt','w')
+    f.write(str(pretrain1end-pretrain1start))
+    f.close()
+
+    #timing
+    pretrain2start = timeit.default_timer()
+
+    print('pretrain2: reconstruction with representative bulk loss')
+    repremodels2=[]
+    i=0
+    for rp in repres:
+        sid = sids[rp]
+        # if exists, load model
+        print('load existing model')
+        modelfile = 'fastreconst2_' + sid
+        path = name + '/models/fastreconst2_' + sid 
+        if modelfile in os.listdir(name + '/models'):
+            print('load existing pretrain 2 model for ' + sid)
+            adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
+            model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
+            model.module.load_state_dict(torch.load(path))
+            repremodels2.append(model)
+            #continue
+        else: repremodels2.append(reconst_pretrain2(name,sid,repremodels[i],\
+                                                    device,k=15,diagw=1.0,vaesteps=int(pretrain2vae), gansteps=int(pretrain2gan),save=True))
+        i=i+1
+
+    #timing
+    #pretrain2end = timeit.default_timer()
+    #f=open('pretrain2time.txt','w')
+    #f.write(str(pretrain2end-pretrain2start))
+    #f.close()
+
+
+    #timing
+    #f = open('infertime.txt','w')
+
+    print('inference')
+    for i in range(len(sids)):
+        if i not in repres:
+            #timing
+            inferstart = timeit.default_timer()
+
+            tgtpid = i
+            reprepid = repres[cluster_labels[i]]
+
+            fname = sids[reprepid]+'_to_'+sids[tgtpid]+'.npy'
+            if fname in os.listdir(name+'/inferreddata/'):
+                print('Inference for '+sids[i]+' has been finished previously. Skip.')
+                continue
+
+            premodel = repremodels2[cluster_labels[i]]
+            histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0,bulktype=bulktype)
+
+
+            #timing
+            inferend = timeit.default_timer()
+            #f.write(str(inferend-inferend)+'\n')
+    #timing
+    #f.close()
         
-        #timing
-        pretrain2start = timeit.default_timer()
-        
-        print('pretrain2: reconstruction with representative bulk loss')
-        repremodels2=[]
-        i=0
-        for rp in repres:
-            sid = sids[rp]
-            # if exists, load model
-            print('load existing model')
-            modelfile = 'fastreconst2_' + sid
-            path = name + '/models/fastreconst2_' + sid 
-            if modelfile in os.listdir(name + '/models'):
-                print('load existing pretrain 2 model for ' + sid)
-                adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
-                model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
-                model.module.load_state_dict(torch.load(path))
-                repremodels2.append(model)
-                #continue
-            else:
-                repremodels2.append(reconst_pretrain2(name,sid,repremodels[i],device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True))
-            i=i+1
-            
-        #timing
-        pretrain2end = timeit.default_timer()
-        f=open('pretrain2time.txt','w')
-        f.write(str(pretrain2end-pretrain2start))
-        f.close()
-        
-        
-        #timing
-        f = open('infertime.txt','w')
-        
-        print('inference')
-        for i in range(len(sids)):
-            if i not in repres:
-                #timing
-                inferstart = timeit.default_timer()
-                
-                tgtpid = i
-                reprepid = repres[cluster_labels[i]]
-                
-                fname = sids[reprepid]+'_to_'+sids[tgtpid]+'.npy'
-                if fname in os.listdir(name+'/inferreddata/'):
-                    print('Inference for '+sids[i]+' has been finished previously. Skip.')
-                    continue
-                
-                premodel = repremodels2[cluster_labels[i]]
-                histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0)
-                
-                
-                #timing
-                inferend = timeit.default_timer()
-                f.write(str(inferend-inferend)+'\n')
-        #timing
-        f.close()
-        
-    else:
-        print('Start single-cell inference in single-sample mode')
-        
-        repre = representatives
-        target = targetid
-        print('pretrain1: reconstruction')
-        repremodel = fastrecon(pid=representatives, tgtpid=None,device=device,k=15,diagw=1,vaesteps=int(pretrain1vae),gansteps=int(pretrain1gan),save=True,path=None)
-        print('pretrain2: reconstruction with representative bulk loss')
-        premodel = reconst_pretrain2(repre,repremodel,device,k=15,diagw=1.0,vaesteps=int(pretrain2vae),gansteps=int(pretrain2gan),save=True)
-        print('inference')
-        fast_semi(repre,target,premodel,device=device,k=15,diagw=1.0)
+
     
     print('Finished single-cell inference')
     return

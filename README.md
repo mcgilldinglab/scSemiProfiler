@@ -4,7 +4,7 @@
 
 scSemiProfiler is an innovative computational tool combining deep generative models and active learning to economically generate single-cell data for biological studies. It efficiently transforms bulk cohort data into detailed single-cell data using templates from selected representative samples. More details are in our [manuscript](https://www.biorxiv.org/content/10.1101/2023.11.20.567929v1). 
 
-Please find more detailed documentation and tutorials at https://scsemiprofiler.readthedocs.io/en/latest/ 
+For comprehensive details, including API references, usage examples, and tutorials, please refer to our [documentation](https://scsemiprofiler.readthedocs.io/en/latest/).
 
 ## Method Overview
 ![flowchart](./method.jpg)
@@ -57,10 +57,13 @@ Finally, install the version of PyTorch compatible with your devices by followin
 
 
 ## Results reproduction
-Results in our manuscript can be reproduced by running scSemiProfiler on the datasets we abnalyzed (see below).
+Results in our manuscript can be reproduced by running scSemiProfiler on the three datasets we abnalyzed (see below).
 
 ### Raw data availability
 The preprocessed COVID-19 dataset is from [Stephenson et al.'s study](https://www.nature.com/articles/s41591-021-01329-2) and can be downloaded from Array Express under accession number [E-MTAB-10026](https://www.ebi.ac.uk/biostudies/arrayexpress/studies/E-MTAB-10026) The cancer dataset is from [Joanito et al.'s study](https://www.nature.com/articles/s41588-022-01100-4#Sec2). The count expression matrices are available through Synapse under the accession codes [syn26844071](https://www.synapse.org/#!Synapse:syn26844071/wiki/615389) The iMGL dataset is from [Ramaswami1 et al.'s study](https://www.biorxiv.org/content/10.1101/2023.03.09.531934v1.full.pdf).The raw count iMGL bulk and single-cell data can be downloaded from Gene Expression Omnibus (GEO) repository under accesssion number [GSE226081](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE226081).
+
+### Preprocessed data availability
+The preprocessed single-cell and bulk datasets are available for download [here](https://mcgill-my.sharepoint.com/:u:/g/personal/jingtao_wang_mail_mcgill_ca/ERyixNDuCFNMiL0chjLxij4BtsiRAaFXOnEcCu1lVBDSIQ?e=lCo0YR). These datasets are provided as h5ad files, including normalized counts with cells and genes already filtered, mirroring the format of our example data.
 
 ### Experiment details
 The three folders contains everything about an older version of scSemiProfiler we used to generate results shown in the manuscript for the three cohorts. The pipeline_test.ipynb in each folder contains code for preprocessing the data and running through most of the functionalities, including representatives' single-cell reconstruction and the single-cell inference for target samples. The semiloop.ipynb in each folder is for semi-profiling the whole cohort using the deep generative model and active learning iteratively. Moreover, semiresultsanalysis.ipynb, deconv_benchmarking.ipynb, and cellchat.ipynb contain code for downstream analyses.

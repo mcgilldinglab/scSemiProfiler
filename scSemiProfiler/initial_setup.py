@@ -5,21 +5,24 @@ import argparse
 import copy
 import numpy as np
 from sklearn.cluster import KMeans
+from typing import Union
 
-def initsetup(name:str, bulk:str,normed:str,geneselection:str,batch:int) -> None:
+def initsetup(name:str, bulk:str,logged:bool=False,normed:bool = True, geneselection:Union[bool,int]=True,batch:int=4) -> None:
     """
-    Initial setup of the semi-profiling pipeline, including processing the bulk data, clustering for finding the initial representatives.
+    Initial setup of the semi-profiling pipeline, including processing the bulk data, clustering for finding the initial representatives. Bulk data should be provided as an 'h5ad' file. Sample IDs should be stored in adata.obs['sample_ids'] and gene names should be stored in adata.var.index. 
     
     Parameters
     ----------
     name
         Project name. 
     bulk
-        Path to bulk data. 
+        Path to bulk data as an h5ad file. Sample IDs should be stored in adata.obs['sample_ids'] and gene names should be stored in adata.var.index. 
+    logged
+        Whether the data has been logged or not
     normed
-        Whether the data has been library size normed or not. 
+        Whether the library size has been normalized or not
     geneselection
-        Whether to perform gene selection.
+        Either a boolean value indicating whether to perform gene selection using the bulk data or not, or a integer specifying the number of highly variable genes should be selected.
     batch 
         Representative selection batch size.
     
@@ -32,10 +35,11 @@ def initsetup(name:str, bulk:str,normed:str,geneselection:str,batch:int) -> None
     >>> import scSemiProfiler
     >>> name = 'runexample'
     >>> bulk = 'example_data/bulkdata.h5ad'
-    >>> normed = 'yes'
-    >>> geneselection = 'no'
+    >>> logged = False
+    >>> normed = True
+    >>> geneselection = False
     >>> batch = 2
-    >>> scSemiProfiler.initsetup(name, bulk,normed,geneselection,batch)
+    >>> scSemiProfiler.initsetup(name, bulk,logged,normed,geneselection,batch)
 
     """
     
@@ -50,9 +54,16 @@ def initsetup(name:str, bulk:str,normed:str,geneselection:str,batch:int) -> None
     
     
     bulkdata = anndata.read_h5ad(bulk)
-
-    if normed == 'no':
+    
+    
+    if normed == False:
+        if logged == True:
+            print('Bad data preprocessing. Please normalize the library size before log-transformation.')
+            return
         sc.pp.normalize_total(bulkdata, target_sum=1e4)
+    
+    if logged == False:
+        sc.pp.log1p(bulkdata)
         
     # write sample ids
     sids = list(bulkdata.obs['sample_ids'])
@@ -61,26 +72,35 @@ def initsetup(name:str, bulk:str,normed:str,geneselection:str,batch:int) -> None
         f.write(sid+'\n')
     f.close()
     
-    # log transformation
-    sc.pp.log1p(bulkdata)
     
-    if geneselection == 'no':
+    if geneselection == False:
         hvgenes = np.array(bulkdata.var.index)
-    else:
+    elif geneselection == True:
         sc.pp.highly_variable_genes(bulkdata, n_top_genes=6000)
+        #sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+        bulkdata = bulkdata[:, bulkdata.var.highly_variable]
+        hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
+    else:
+        sc.pp.highly_variable_genes(bulkdata, n_top_genes = int(geneselection))
         #sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
         bulkdata = bulkdata[:, bulkdata.var.highly_variable]
         hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
     np.save(name+'/hvgenes.npy',hvgenes)
     
     #dim reduction and clustering
-    sc.tl.pca(bulkdata)
+    
+    if bulkdata.X.shape[0]>100:
+        n_comps = 100
+    else:
+        n_comps = bulkdata.X.shape[0]-1
+    
+    sc.tl.pca(bulkdata,n_comps=n_comps)
     
     bulkdata.write(name + '/processed_bulkdata.h5ad')
     
     #cluster
     BATCH_SIZE = batch
-    kmeans = KMeans(n_clusters=BATCH_SIZE, random_state=0).fit(bulkdata.obsm['X_pca'])
+    kmeans = KMeans(n_clusters=BATCH_SIZE, random_state=1).fit(bulkdata.obsm['X_pca'])
     cluster_labels = kmeans.labels_
     #find representatives and cluster labels
     pnums = []

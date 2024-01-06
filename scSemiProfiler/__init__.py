@@ -6,6 +6,7 @@ import pdb,sys,os
 
 
 from .representative_selection import activeselection
+from .get_eg_representatives import get_eg_representatives
 from .initial_setup import initsetup
 from .inference import scinfer
 from .singlecell_process import scprocess 

@@ -26,18 +26,35 @@ from sklearn.decomposition import PCA
 
 
 
-def get_eg_representatives(name:str) -> None:
+def get_cohort_sc(name:str, path:str, cohort_name:str, representative_ids:list) -> None:
     """
-    Get representatives' single-cell data and store it as /representative_sc.h5ad under the project's directory
+    Get representatives' single-cell data from a given preprocessed cohort (COVID-19, colorectal cancer, iMGL) and store the data as cohort_name.h5ad under the project's directory
     
     Parameters
     ----------
     name 
         Project name
+    path 
+        Path to the cohort dataset h5ad file
+    cohort_name 
+        The output single-cell data file name
+    representative_ids 
+        The sample IDs of the selected representatives
+        
+    Returns
+    -------
+    None
 
+    Example
+    -------
+    >>> covidpath = '../preprocessed_data/preprocessed_covid-19_sc.h5ad'
+    >>> name = 'semi-profile-covid-19'
+    >>> cohort_name = 'covid-19'
+    >>> representative_ids['MH9143273', 'BGCV09_CV0279', 'MH9143276', 'MH8919282']
+    >>> get_cohort_sc(name=name, path=path, cohort_name= cohort_name, representative_ids=representative_ids)
     """
     
-    scdata = anndata.read_h5ad('example_data/scdata.h5ad')
+    scdata = anndata.read_h5ad(path)
     sids = []
     f = open(name + '/sids.txt', 'r')
     lines = f.readlines()
@@ -45,25 +62,7 @@ def get_eg_representatives(name:str) -> None:
         sids.append(l.strip())
     f.close()
     
-    # get the latest round
-    representatives = []
-    files = os.listdir(name+'/status/')
-    rounds = [0]
-    for file in files:
-        if 'representative' in file:
-            f = open(name + '/status/' + file, 'r')
-            lines = f.readlines()
-            if len(lines) > len(representatives):
-                representatives = []
-                for l in lines:
-                    representatives.append(int(l.strip()))
-            f.close()
-    
-    rsids=[]
-    for r in representatives:
-        sid = sids[r]
-        rsids.append(sid)
-    
+    rsids = representative_ids
     rmask=[]    
     for i in range(len(scdata.obs.index)):
         sid = scdata.obs['sample_ids'][i]
@@ -76,16 +75,17 @@ def get_eg_representatives(name:str) -> None:
     repredata = scdata[rmask,:]
     
     X = repredata.X
-    X = np.array(X.todense())
-    X = np.exp(X) - 1
-    X = sparse.csr_matrix(X)
+    if X.max() < 20:
+        X = np.array(X.todense())
+        X = np.exp(X) - 1
+        X = sparse.csr_matrix(X)
     adata = anndata.AnnData(X)
     adata.obs = repredata.obs
     adata.var = repredata.var
     
-    adata.write(name + '/representative_sc.h5ad')
+    adata.write(name + '/' + cohort_name + '.h5ad')
     
-    print('Obtained single-cell data for representatives.')
+    print('Obtained single-cell data for representatives from the cohort.')
     
     return
 
@@ -207,7 +207,7 @@ def visualize_recon(name:str, representative:Union[int,str]) -> None:
     sc.pl.umap(vdata,color='reconstruction',alpha=0.5,palette=palette)
 
 # visualizing inference performance for a target sample
-def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list) -> None:
+def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list, realdata_path:str = 'example_data/scdata.h5ad') -> None:
     """
     Visualize the inference performance by plotting the representative, inferred target, and target ground truth in the same UMAP.
 
@@ -221,7 +221,9 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
         Representatives sample IDs (int)
     cluster_labels:
         Cluster labels
-        
+    realdata_path:
+        Path to the real-profiled single-cell data
+    
     Returns
     -------
         None
@@ -261,10 +263,14 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
     
     xsem = np.load(name + '/inferreddata/' + sids[representative] + '_to_' + sids[target]+'.npy' )
     x1 = xsem[:,:genelen]
-    alldata = anndata.read_h5ad('example_data/scdata.h5ad')
+    alldata = anndata.read_h5ad(realdata_path)
     tgtdata = alldata[alldata.obs['sample_ids']==sids[target]]
+    
+    
     x2 = np.array(tgtdata.X.todense())
-    x2 = np.exp(x2)-1
+    
+    if x2.max()<20:
+        x2 = np.exp(x2)-1
     
     vdata = anndata.AnnData(np.concatenate([x0,x1,x2],axis=0))
     rc = []
