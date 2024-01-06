@@ -56,6 +56,7 @@ Single-cell Inference
 .. autosummary::
    :toctree: api
 
+   scSemiProfiler.inference.tgtinfer
    scSemiProfiler.inference.scinfer
 
 
