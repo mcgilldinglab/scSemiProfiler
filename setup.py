@@ -23,7 +23,7 @@ setup(
     'jax>= 0.4.19',
     'igraph>=0.9.9',
     'gseapy>=1.0.4',                  
-    'scvi-tools>= 1.0.4'],
+    'scvi-tools == 1.0.4'],
 )
 
 
