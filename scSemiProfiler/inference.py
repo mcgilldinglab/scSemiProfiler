@@ -241,7 +241,7 @@ def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],devic
 
 
 
-def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model0 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight =1*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
@@ -250,68 +250,62 @@ def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpi
         model0.module.load_state_dict(torch.load(premodel))
     else:
         model0.module.load_state_dict(premodel.module.state_dict())
-    lr = 2e-4 
-    model0.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model0.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model0.module.state_dict(), name+'/tmp/model0')
     return model0.history
 
 
-def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model1 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 4*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
     model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
-    lr = 2e-4
-    model1.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model1.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model1.module.state_dict(), name+'/tmp/model1')
     return model1.history
 
-def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model2 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 16*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
     model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
-    lr = 2e-4
-    model2.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model2.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model2.module.state_dict(), name+'/tmp/model2')
     return model2.history
 
-def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model3 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 64*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
     model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
-    lr = 2e-4 
-    model3.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model3.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model3.module.state_dict(), name+'/tmp/model3')
     return model3.history
 
-def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model4 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 128*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
     model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
-    lr = 2e-4 
-    model4.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model4.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model4.module.state_dict(), name+'/tmp/model4')
     return model4.history
 
-def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0):
+def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
     model = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
     model.module.load_state_dict(torch.load(name+'/tmp/model4'))
-    lr = 2e-4 
-    model.train(max_epochs=150, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
+    model.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
     torch.save(model.module.state_dict(), name+'/tmp/model')
     return model.history
 
-def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0,bulktype='pseudobulk') -> Tuple[ dict, np.array, fastgenerator]:
+def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0,bulktype='pseudobulk',pseudocount=0.1,lr = 2e-4,epochs=150,ministages = 5) -> Tuple[ dict, np.array, fastgenerator]:
     """
     Accelerated version of single-cell inference for the target sample.
     
@@ -333,7 +327,13 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
         The weight of the original cell when agregating the information
     bulktype
         'real' or 'pseudobulk'
-    
+    pseudocount
+    	Pseudocount value used when simulating pseudobulk using real bulk
+    lr
+        Learning rate
+    epochs
+        Epochs for each mini-stage in the inference process
+        
     Returns
     -------
     histdic
@@ -373,7 +373,8 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
         
         pseudobulk = (np.array(adata.X)).mean(axis=0)
         pseudobulk = pseudobulk.reshape((1,-1))
-        ratio = np.array((tgtrealbulk+0.1)/(reprealbulk+0.1))
+        ratio = np.array((tgtrealbulk+pseudocount)/(reprealbulk+pseudocount))
+        #ratio = np.array((tgtrealbulk+1)/(reprealbulk+1))
         ratio = np.concatenate([ratio,np.ones((1, pseudobulk.shape[1]-ratio.shape[1]))],axis=1)
         bulk = pseudobulk * ratio
         bulk = torch.tensor(bulk).to(device)
@@ -398,7 +399,7 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     fastgenerator.setup_anndata(adata)
 
     
-    hist = unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
     histdic={}
     histdic['total0'] = hist['train_loss_epoch']
     histdic['bulk0'] = hist['kl_global_train']
@@ -407,14 +408,16 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     torch.cuda.empty_cache() 
     #import time
     #time.sleep(10)
-    hist = unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[0],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    
+    
+    hist = unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[0],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
 
     histdic['total1'] = hist['train_loss_epoch']
     histdic['bulk1'] = hist['kl_global_train']
     #del model0
     gc.collect()
     torch.cuda.empty_cache() 
-    hist = unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[1],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    hist = unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[1],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
 
     histdic['total2'] = hist['train_loss_epoch']
     histdic['bulk2'] = hist['kl_global_train']
@@ -424,20 +427,22 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     #time.sleep(10)
     torch.cuda.empty_cache() 
     
-    hist = unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[2],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    if ministages>3:
+        hist = unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[2],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
 
-    histdic['total3'] = hist['train_loss_epoch']
-    histdic['bulk3'] = hist['kl_global_train']
+        histdic['total3'] = hist['train_loss_epoch']
+        histdic['bulk3'] = hist['kl_global_train']
     
     
     #del model2
     gc.collect()
     torch.cuda.empty_cache() 
     #time.sleep(10)
-    hist = unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[3],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0)
+    if ministages >4:
+        hist = unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[3],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
 
-    histdic['total4'] = hist['train_loss_epoch']
-    histdic['bulk4'] = hist['kl_global_train']
+        histdic['total4'] = hist['train_loss_epoch']
+        histdic['bulk4'] = hist['kl_global_train']
     
     #del model3
     gc.collect()
@@ -452,7 +457,7 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbounds[3])
-    model.module.load_state_dict(torch.load(name+'/tmp/model4'))
+    model.module.load_state_dict(torch.load(name+'/tmp/model'+str(ministages-1)))
 
     # inference
     xsemi = []
@@ -494,6 +499,8 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
     inferepochs:int = 150,
     lambdabulkt:float = 8.0,
     inferlr:float = 2e-4,
+    pseudocount:float = 0.1,
+    k:int = 15,
     device:str = 'cuda:0') -> None:
     """
     Computationally infer the single-cell data of a single non-representative target sample based on a representatives' single-cell data and bulk data of both samples. 
@@ -532,9 +539,13 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
         Scaling factor for the initial target bulk loss.
     inferlr 
         Infer stage learning rate.
+    k
+        The number of nearest neighbors used in cell graph.
     device 
         Which device to use, e.g. 'cpu', 'cuda:0'.
-
+    pseudocount
+        Pseudocount used when converting real bulk to pseudobulk space
+        
     Returns
     -------
         None
@@ -560,7 +571,7 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
     device = device
     
     
-    k = 15
+
     diagw = 1.0
 
     sids = []
@@ -620,7 +631,7 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
         print('Inference for '+tgt+' has been finished previously. Skip.')
 
     premodel = repremodels2
-    histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0, bulktype = bulktype)
+    histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0, bulktype = bulktype,lr=inferlr,epochs=inferepochs,pseudocount=pseudocount)
     print('Finished target sample single-cell inference')
     return
 
@@ -638,6 +649,9 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
     inferepochs:int = 150,
     lambdabulkt:float = 8.0,
     inferlr:float = 2e-4,
+    pseudocount:float = 0.1,
+    ministages:int = 5,
+    k:int = 15,
     device:str = 'cuda:0') -> None:
     """
     Computationally infer the single-cell data of all non-representative samples (target samples) based on the cohort's bulk data and the representatives' single-cell data
@@ -676,9 +690,15 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
         Scaling factor for the initial target bulk loss.
     inferlr 
         Infer stage learning rate.
+    ministages
+        Number of ministages during inference
+    k
+        The number of nearest neighbors used in cell graph.
     device 
         Which device to use, e.g. 'cpu', 'cuda:0'.
-
+    pseudocount:
+        Pseudocount used when converting data from real bulk space to pseudobulk space
+        
     Returns
     -------
         None
@@ -705,7 +725,7 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
     device = device
     
     
-    k = 15
+
     diagw = 1.0
 
     
@@ -814,7 +834,7 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
                 continue
 
             premodel = repremodels2[cluster_labels[i]]
-            histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0,bulktype=bulktype)
+            histdic,xsemi,infer_model  = fast_semi(name,reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0,bulktype=bulktype,lr=inferlr,epochs=inferepochs,pseudocount=pseudocount,ministages = ministages)
 
 
             #timing

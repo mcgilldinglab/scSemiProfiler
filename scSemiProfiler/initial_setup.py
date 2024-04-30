@@ -5,11 +5,16 @@ import argparse
 import copy
 import numpy as np
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_samples, silhouette_score
 from typing import Union
+
+import matplotlib.pyplot as plt
+
+
 
 def initsetup(name:str, bulk:str,logged:bool=False,normed:bool = True, geneselection:Union[bool,int]=True,batch:int=4) -> None:
     """
-    Initial setup of the semi-profiling pipeline, including processing the bulk data, clustering for finding the initial representatives. Bulk data should be provided as an 'h5ad' file. Sample IDs should be stored in adata.obs['sample_ids'] and gene names should be stored in adata.var.index. 
+    Initial setup of the semi-profiling pipeline, including processing the bulk data, clustering for finding the initial representatives. Bulk data should be provided as an 'h5ad' file. Sample IDs should be stored in adata.obs['sample_ids'] and gene names should be stored in adata.var.index. If not using active learning for iterative representative selection, directly set the batch size to be the total number of representatives desired.
     
     Parameters
     ----------
@@ -24,7 +29,7 @@ def initsetup(name:str, bulk:str,logged:bool=False,normed:bool = True, geneselec
     geneselection
         Either a boolean value indicating whether to perform gene selection using the bulk data or not, or a integer specifying the number of highly variable genes should be selected.
     batch 
-        Representative selection batch size.
+        Representative selection batch size. 
     
     Returns
     -------
@@ -51,7 +56,8 @@ def initsetup(name:str, bulk:str,logged:bool=False,normed:bool = True, geneselec
         print(name + ' exists. Please choose another name.')
         return
     
-    
+    if (os.path.isdir(name+'/figures')) == False:
+        os.system('mkdir '+name+'/figures')
     
     bulkdata = anndata.read_h5ad(bulk)
     
@@ -142,6 +148,7 @@ def initsetup(name:str, bulk:str,logged:bool=False,normed:bool = True, geneselec
         print(sids[representatives[i]])
     
     return
+
 
 
 

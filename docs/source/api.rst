@@ -73,6 +73,20 @@ Representatives Selection
    scSemiProfiler.representative_selection.activeselection
 
 
+Global Mode
+~~~~~
+
+
+.. module:: scSemiProfiler.utils
+.. currentmodule:: scSemiProfiler
+
+.. autosummary::
+   :toctree: api
+   scSemiProfiler.utils.inspect_data
+   scSemiProfiler.utils.global_stop_checking
+
+
+
 Utils - Downstream Analysis
 ~~~~~
 

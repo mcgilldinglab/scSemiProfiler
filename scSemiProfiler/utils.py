@@ -19,8 +19,10 @@ import scipy.stats as stats
 import gseapy
 import copy
 from typing import Tuple
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_samples, silhouette_score
 from .inference import *
-
+import random
 import faiss
 from sklearn.decomposition import PCA
 
@@ -76,7 +78,8 @@ def get_cohort_sc(name:str, path:str, cohort_name:str, representative_ids:list) 
     
     X = repredata.X
     if X.max() < 20:
-        X = np.array(X.todense())
+        if scipy.sparse.issparse(X):
+            X = np.array(X.todense())
         X = np.exp(X) - 1
         X = sparse.csr_matrix(X)
     adata = anndata.AnnData(X)
@@ -132,7 +135,7 @@ def estimate_cost(total_samples:int,n_representatives:int) -> Tuple[float,float]
 
 
 # visualizing reconstruction performance of a representative
-def visualize_recon(name:str, representative:Union[int,str]) -> None:
+def visualize_recon(name:str, representative:Union[int,str], save = None) -> None:
     """
     Visualize the performance of reconstruction by plotting the original and reconstructed data in the same UMAP.
 
@@ -140,9 +143,11 @@ def visualize_recon(name:str, representative:Union[int,str]) -> None:
     ----------
     name
         Project name
-    representative:
+    representative
         Representative sample ID (string or int)
-
+    save
+        Path within the 'figures' folder to save the plot
+        
     Returns
     -------
         None
@@ -204,10 +209,10 @@ def visualize_recon(name:str, representative:Union[int,str]) -> None:
     sc.tl.umap(vdata)
     
     palette = {'Representative':'blue','Reconstructed':'gray'}
-    sc.pl.umap(vdata,color='reconstruction',alpha=0.5,palette=palette)
+    sc.pl.umap(vdata,color='reconstruction',alpha=0.5,palette=palette,save=save)
 
 # visualizing inference performance for a target sample
-def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list, realdata_path:str = 'example_data/scdata.h5ad') -> None:
+def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list, realdata_path:str = 'example_data/scdata.h5ad', save = None) -> None:
     """
     Visualize the inference performance by plotting the representative, inferred target, and target ground truth in the same UMAP.
 
@@ -223,7 +228,9 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
         Cluster labels
     realdata_path:
         Path to the real-profiled single-cell data
-    
+    save
+        Path within the 'figures' folder to save the plot
+        
     Returns
     -------
         None
@@ -267,7 +274,10 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
     tgtdata = alldata[alldata.obs['sample_ids']==sids[target]]
     
     
-    x2 = np.array(tgtdata.X.todense())
+    x2 = tgtdata.X
+    if scipy.sparse.issparse(x2):
+        x2 = x2.todense()
+    x2 = np.array(x2)
     
     if x2.max()<20:
         x2 = np.exp(x2)-1
@@ -287,11 +297,11 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
     sc.tl.umap(vdata)
     
     palette = {'Representative':'blue','Target inferred':'yellow','Target ground truth':'red'}
-    sc.pl.umap(vdata,color='inference',alpha=0.5,palette=palette)
+    sc.pl.umap(vdata,color='inference',alpha=0.5,palette=palette,save=save)
     
     return
 
-def loss_curve(name:str, reprepid:int=None,tgtpid:int=None,stage:int=1)->None:
+def loss_curve(name:str, reprepid:int=None,tgtpid:int=None,stage:int=1, save = None)->None:
     """
     Visualize the training loss curves
 
@@ -305,6 +315,8 @@ def loss_curve(name:str, reprepid:int=None,tgtpid:int=None,stage:int=1)->None:
         target sample IDs 
     stage:
         The training stage to visualize, 1: pretrain1; 2: pretrain2; 3: inference 
+    save
+        Path within the 'figures' folder to save the plot
         
     Returns
     -------
@@ -355,7 +367,11 @@ def loss_curve(name:str, reprepid:int=None,tgtpid:int=None,stage:int=1)->None:
         axs[2].plot(history['bulk2'])
         axs[3].plot(history['bulk3'])
         axs[4].plot(history['bulk4'])
-        #plt.title('Inference Target Bulk Loss')
+        plt.title('Inference Loss')
+    
+    if save!= None:
+        plt.savefig(name + 'figures/'+save,dpi=600,bbox_inches='tight')
+    
     return
 
 
@@ -364,7 +380,9 @@ def assemble_cohort(name:str,
                     representatives:Union[list,str],
                     cluster_labels:Union[list,str],
                     celltype_key:str = 'celltypes',
-                    sample_info_keys = ['states_collection_sum']):
+                    sample_info_keys:list = ['states_collection_sum'],
+                    bulkpath:str = 'example_data/bulkdata.h5ad',
+                    annotator = MLPClassifier(hidden_layer_sizes=(200,))):
     """
     Assemble inferred sample data and representative sample data into semi-profiled cohort and annotate the celltype. 
     
@@ -380,7 +398,9 @@ def assemble_cohort(name:str,
         The key in .obs specifying the cell type information
     sample_info_keys:
         Keys for other sample-level information to be stored in the assembled dataset
-
+    bulkpath:
+        Path to the bulk data
+    
     Returns
     -------
     semidata:
@@ -392,14 +412,15 @@ def assemble_cohort(name:str,
     >>>                 repre,
     >>>                 cls,
     >>>                 celltype_key = 'celltypes',
-    >>>                 sample_info_keys = ['states_collection_sum'])
+    >>>                 sample_info_keys = ['states_collection_sum'],
+    >>>                 bulkpath = 'example_data/bulkdata.h5ad')
 
 
     """
     
     
     print('Start assembling semi-profiled cohort.')
-    
+
     # read sample ids
     sids = []
     f = open(name + '/sids.txt', 'r')
@@ -439,14 +460,15 @@ def assemble_cohort(name:str,
         sample_celltype = list(adata.obs[celltype_key])
         ytrain = ytrain + sample_celltype
     xtrain = np.concatenate(xtrain, axis=0)
-    xtrain = np.log1p(xtrain)
+    if xtrain.max()>10:
+        xtrain = np.log1p(xtrain)
     ytrain = np.array(ytrain)
     
     
     # train annotator
     print('Training cell type annotator.')
     st =  timeit.default_timer()
-    annotator = MLPClassifier() #hidden_layer_sizes=(200,)) 
+    #annotator = MLPClassifier(hidden_layer_sizes=(200,)) 
     annotator.fit((xtrain),ytrain)
     ed =  timeit.default_timer()
     print('Finished. Cost ' + str(ed-st) + ' seconds.')
@@ -467,6 +489,7 @@ def assemble_cohort(name:str,
     
     for i in range(len(sids)):
         if i in representatives:
+            sid = sids[i]
             adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
             
             # expression
@@ -474,9 +497,10 @@ def assemble_cohort(name:str,
             
             # essential keys
             semicelltype = semicelltype + list(adata.obs[celltype_key])
-            semiids = semiids + list(adata.obs['sample_ids'])
+            #semiids = semiids + list(adata.obs['sample_ids'])
             for j in range(adata.X.shape[0]):
-                source.append('representative')
+                semiids.append(sids[i])
+                source.append('Representative')
                 
             ## other keys
             for k in sample_info_keys:
@@ -493,11 +517,10 @@ def assemble_cohort(name:str,
             semicelltype = semicelltype + list(predicted_celltype)
             for j in range(x.shape[0]):
                 semiids.append(sids[i])
-                source.append('inferred')
+                source.append('Inferred')
                 
             ## other keys
-            sid = sids[representatives[cluster_labels[i]]]
-            bulkdata = anndata.read_h5ad('example_data/bulkdata.h5ad')
+            bulkdata = anndata.read_h5ad(bulkpath)
             for k in sample_info_keys:
                 for j in range(x.shape[0]):
                     sampleinfo[k].append(bulkdata.obs[k][i])
@@ -517,7 +540,7 @@ def assemble_cohort(name:str,
     return semidata
 
 
-def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_keys:list = ['states_collection_sum'],rnd:int=2,batch:int=2) -> Tuple[anndata.AnnData, anndata.AnnData]:
+def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_keys:list = ['states_collection_sum'],rnd:int=2,batch:int=2,gtsc:str = 'example_data/scdata.h5ad', gtbulk:str = 'example_data/bulkdata.h5ad') -> Tuple[anndata.AnnData, anndata.AnnData]:
     """
     Assemble previous round of inferred representative data and annotate the cell type. The real-profiled representatives in the current round is also provided for comparison.
     
@@ -533,7 +556,11 @@ def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_k
         The round of semi-profiling to assemble. For example, select the second round (2 batches of representatives) using rnd = 2
     batch:
         The representative selection batch size
-
+    gtsc:
+        Path to ground truth data
+    gtbulk: 
+        Path to bulk data
+        
     Returns
     -------
     realrepdata:
@@ -572,7 +599,10 @@ def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_k
     f.close()
 
     newreps = reps[-batch:]
-    alldata = anndata.read_h5ad('example_data/scdata.h5ad')
+    
+    alldata = anndata.read_h5ad(gtsc)
+    
+    genelen = len(alldata.var.index)
     
     newrepsids = []
     for i in newreps:
@@ -613,11 +643,13 @@ def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_k
     for i in range(len(oldreps)):
         sid = sids[oldreps[i]]
         adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
-        xtrain.append(np.array(adata.X))
+        x = np.array(adata.X)
+        if x.max() > 20:
+            x = np.log1p(x)
+        xtrain.append(x)
         sample_celltype = list(adata.obs[celltype_key])
         ytrain = ytrain + sample_celltype
     xtrain = np.concatenate(xtrain, axis=0)
-    xtrain = np.log1p(xtrain)
     ytrain = np.array(ytrain)
     # train annotator
     print('Training cell type annotator.')
@@ -642,20 +674,22 @@ def assemble_representatives(name:str,celltype_key:str='celltypes',sample_info_k
         xinf.append(x)
 
         # essential keys
-        predicted_celltype = annotator.predict(np.log1p(x))
+        if x.max()>20:
+            x = np.log1p(x)
+        predicted_celltype = annotator.predict(x)
         semicelltype = semicelltype + list(predicted_celltype)
         for j in range(x.shape[0]):
             semiids.append(sids[i])
             
         ## other keys
-        bulkdata = anndata.read_h5ad('example_data/bulkdata.h5ad')
+        bulkdata = anndata.read_h5ad(gtbulk)
         for k in sample_info_keys:
             for j in range(x.shape[0]):
                 sampleinfo[k].append(bulkdata.obs[k][i])
                     
                     
     xinf = np.concatenate(xinf, axis=0)
-    
+    xinf = xinf[:,:genelen]
     
     infrepdata = anndata.AnnData(np.array(xinf))
     infrepdata.obs[celltype_key] = semicelltype
@@ -676,7 +710,8 @@ def compare_umaps(
                     name:str = 'testexample',
                     representatives:str = 'testexample/status/init_representatives.txt',
                     cluster_labels:str = 'testexample/status/init_cluster_labels.txt',
-                    celltype_key:str = 'celltypes'
+                    celltype_key:str = 'celltypes',
+                    save = None
                  ) -> Tuple[anndata.AnnData, anndata.AnnData, anndata.AnnData]:
     """
     Compare the real-profiled and semi-profiled datasets by plotting them in a same UMAP
@@ -693,6 +728,8 @@ def compare_umaps(
         Path to the txt file storing the cluster label information
     celltype_key:
         The key in .obs specifying the cell type information
+    save
+        Path within the 'figures' folder to save the plot
 
     Returns
     -------
@@ -738,14 +775,14 @@ def compare_umaps(
     sc.pp.neighbors(combdata,n_neighbors=50)
     sc.tl.umap(combdata)
     
-    sc.pl.umap(combdata,color = 'cohort', title = 'Real-profiled VS Semi-profiled')
+    sc.pl.umap(combdata,color = 'cohort', title = 'Real-profiled VS Semi-profiled', save = save + 'real_vs_semi')
     
     
     semidata.obsm['X_umap'] = combdata.obsm['X_umap'][gtdata.X.shape[0]:]
     gtdata.obsm['X_umap'] = combdata.obsm['X_umap'][:gtdata.X.shape[0]]
     
-    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled')
-    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled')
+    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled', save = save+'real')
+    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled', save = save+'semi')
     
     return combdata,gtdata,semidata
 
@@ -754,7 +791,7 @@ def compare_adata_umaps(
     semidata:anndata.AnnData,
     gtdata:anndata.AnnData,                
     name:str = 'testexample',
-    celltype_key:str = 'celltypes'
+    celltype_key:str = 'celltypes', save = None
     ) -> Tuple[anndata.AnnData, anndata.AnnData, anndata.AnnData]:
     """
     Compare the real-profiled and semi-profiled datasets by plotting them in a same UMAP
@@ -769,7 +806,9 @@ def compare_adata_umaps(
         Project name
     celltype_key:
         The key in .obs specifying the cell type information
-
+    save
+        Path within the 'figures' folder to save the plot
+        
     Returns
     -------
     combdata
@@ -790,11 +829,20 @@ def compare_adata_umaps(
         
     """
     
+    x0 = gtdata.X
+    if type(x0) != np.ndarray:#== scipy.sparse.csr_matrix:
+        x0 = x0.todense()
+    x1 = semidata.X
+    if type(x1) != np.ndarray:#scipy.sparse.csr_matrix:
+        x1 = x1.todense()
     
+    x0 = np.array(x0)
+    x1 = np.array(x1)
     
-    x0 = np.array(gtdata.X.todense())
-    x1 = np.array(semidata.X)
-    x1 = np.log1p(x1)
+    if x1.max()>20:    
+        x1 = np.log1p(x1)
+    if x0.max()>20:    
+        x0 = np.log1p(x0)
     combdata = anndata.AnnData(np.concatenate([x0,x1],axis=0))
     combdata.var = gtdata.var
     combdata.obs[celltype_key] = list(gtdata.obs[celltype_key]) + list(semidata.obs[celltype_key])
@@ -806,7 +854,7 @@ def compare_adata_umaps(
         cohort.append('semi-profiled')
     combdata.obs['cohort'] = cohort
     
-    sc.pp.log1p(combdata)
+    #sc.pp.log1p(combdata)
     sc.tl.pca(combdata,n_comps=100)
     sc.pp.neighbors(combdata,n_neighbors=50)
     sc.tl.umap(combdata)
@@ -817,8 +865,14 @@ def compare_adata_umaps(
     semidata.obsm['X_umap'] = combdata.obsm['X_umap'][gtdata.X.shape[0]:]
     gtdata.obsm['X_umap'] = combdata.obsm['X_umap'][:gtdata.X.shape[0]]
     
-    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled')
-    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled')
+    if save!=None:
+        savereal = save+'read'
+        savesemi = save+'semi'
+    else:
+        savereal = None
+        savesemi = None
+    sc.pl.umap(gtdata,color = celltype_key,title = 'Real-profiled',save=savereal)
+    sc.pl.umap(semidata,color = celltype_key,title = 'Semi-profiled',save=savesemi)
     
     return combdata,gtdata,semidata
 
@@ -861,8 +915,8 @@ def composition_by_group(
     adata:anndata.AnnData,
     colormap:Union[str,list] = None,
     groupby:str = None,
-    save:bool = False,
     title:str = 'Cell type composition'
+    , save = None
     ) -> None:
     """
     Visualizing the cell type composition in each group.
@@ -875,10 +929,10 @@ def composition_by_group(
         The colormap for visualization
     groupby:
         The key in .obs specifying groups.
-    save:
-        Whether to save the plot or not
     title:
         Plot title
+    save
+        Path within the 'figures' folder to save the plot
 
     Returns
     -------
@@ -934,17 +988,11 @@ def composition_by_group(
     
     plt.xlabel('Proportion')
     
-    if save != False:
-        if save == True:
-            path = 'stackedbar.png'
-        else:
-            path = save
-        plt.savefig(path,dpi=600,bbox_inches='tight')
+    if save != None:
+        plt.savefig(name + 'figures/'+save,dpi=600,bbox_inches='tight')
         
     return
 
-
-IFN_genes = ["ABCE1", "ADAR", "BST2", "CACTIN", "CDC37", "CNOT7", "DCST1", "EGR1", "FADD", "GBP2", 	"HLA-A", 	"HLA-B", 	"HLA-C", 	"HLA-E", 	"HLA-F", 	"HLA-G", 	"HLA-H", 	"HSP90AB1", 	"IFI27", 	"IFI35", 	"IFI6", 	"IFIT1", 	"IFIT2", 	"IFIT3", 	"IFITM1", 	"IFITM2", 	"IFITM3", 	"IFNA1", 	"IFNA10", 	"IFNA13", 	"IFNA14", 	"IFNA16", 	"IFNA17", 	"IFNA2", 	"IFNA21", 	"IFNA4", 	"IFNA5", 	"IFNA6", 	"IFNA7", 	"IFNA8", 	"IFNAR1", 	"IFNAR2", 	"IFNB1", 	"IKBKE", 	"IP6K2", 	"IRAK1", 	"IRF1", 	"IRF2", 	"IRF3", 	"IRF4", 	"IRF5", 	"IRF6", 	"IRF7", 	"IRF8", 	"IRF9", 	"ISG15", 	"ISG20", 	"JAK1", 	"LSM14A", 	"MAVS", 	"METTL3", 	"MIR21", 	"MMP12", 	"MUL1", 	"MX1", 	"MX2", 	"MYD88", 	"NLRC5", 	"OAS1", 	"OAS2", 	"OAS3", 	"OASL", 	"PSMB8", 	"PTPN1", 	"PTPN11", 	"PTPN2", 	"PTPN6", 	"RNASEL", 	"RSAD2", 	"SAMHD1", 	"SETD2", 	"SHFL", 	"SHMT2", 	"SP100", 	"STAT1", 	"STAT2", 	"TBK1", 	"TREX1", 	"TRIM56", 	"TRIM6", 	"TTLL12", 	"TYK2", 	"UBE2K", 	"USP18", 	"WNT5A", "XAF1", "YTHDF2", "YTHDF3", "ZBP1"]
 
 
 def geneset_pattern(
@@ -952,7 +1000,9 @@ def geneset_pattern(
     genes: list,
     condition_key: str,
     celltype_key: str,
+    totaltypes: Union[np.array,list] = None,
     baseline:str = None,
+    save = None
     ) -> np.array:
     """
     Generate heatmaps for visualizing gene set activation pattern in a dataset.
@@ -967,9 +1017,13 @@ def geneset_pattern(
         The key in .obs specifying different sample conditions.
     celltype_key:
         The key in .obs specifying cell type information
+    totaltypes:
+        Total cell type names
     baseline:
         Baseline condition
-
+    save
+        Path within the 'figures' folder to save the plot
+    
     Returns
     -------
     pattern
@@ -983,7 +1037,8 @@ def geneset_pattern(
     sc.tl.score_genes(adata, genes, ctrl_size=50, gene_pool=None, n_bins=25, score_name='geneset', random_state=0, copy=False, use_raw=None)
     
     conditions = np.unique(adata.obs[condition_key])
-    totaltypes = np.unique(adata.obs[celltype_key])
+    if type(totaltypes) == type(None):
+        totaltypes = np.unique(adata.obs[celltype_key])
     
     scores = adata.obs['geneset']
 
@@ -999,7 +1054,9 @@ def geneset_pattern(
             pattern[i,j] = relevantscores.mean()
             
     sn.heatmap(pattern,xticklabels = totaltypes,yticklabels=conditions,cmap="coolwarm",square = True)
-
+    if (save != None) and (save!=False):
+        plt.savefig(save)
+    
     
     return pattern
 
@@ -1008,7 +1065,7 @@ def geneset_pattern(
 
 
 # dot plot
-def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str) -> None:
+def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str, top_n_degs:int = 3, save = None) -> Tuple[float, float, list]:
     """
     Use dotplot to compare the cell type signatures found using the real-profiled dataset and the semi-profiled datset.
     
@@ -1020,10 +1077,14 @@ def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnDa
         The semi-profiled dataset
     celltype_key:
         The key in .obs specifying the cell type labels
-
+    save
+        Path within the 'figures' folder to save the plot
+    top_n_degs
+        Top n DEGs used for each cell type in the dotplot
+    
     Returns
     -------
-        None
+        Tuple[float, float, List]: A tuple containing two floats and a list: Pearson correlation of dot sizes, dot colors, and a list of signature genes.
 
     Example
     -------
@@ -1036,13 +1097,20 @@ def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnDa
     signatures = []
     for j in range(totaltypes.shape[0]):
         typede = []
-        for i in range(3):
+        for i in range(top_n_degs):
             g = gtdata.uns['rank_genes_groups']['names'][i][j]
             typede.append(g)
         signatures = signatures + typede
     
-    sc.pl.dotplot(gtdata, signatures, groupby = celltype_key)
-    sc.pl.dotplot(semisdata, signatures, groupby = celltype_key)
+    
+    if save!=None:
+        savegt = save + 'gt'
+        savesemi = save + 'semi'
+    else:
+        savegt = None
+        savesemi = None
+    sc.pl.dotplot(gtdata, signatures, groupby = celltype_key, save = savegt)
+    sc.pl.dotplot(semisdata, signatures, groupby = celltype_key,save=savesemi)
     
     dpgt = sc.pl.dotplot(gtdata, signatures, groupby=celltype_key,return_fig=True)
     dpgtcolor = (dpgt.dot_color_df.to_numpy())
@@ -1056,7 +1124,7 @@ def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnDa
     print(scipy.stats.pearsonr(dpgtsize.flatten(), dpsemisize.flatten()))
     print('Expression intensity (color) similarity between real and semi-profiled')
     print(scipy.stats.pearsonr(dpgtcolor.flatten(), dpsemicolor.flatten()))
-    return 
+    return scipy.stats.pearsonr(dpgtsize.flatten(), dpsemisize.flatten())[0], scipy.stats.pearsonr(dpgtcolor.flatten(), dpsemicolor.flatten())[0], signatures
 
 
 
@@ -1089,7 +1157,7 @@ def comb(a:int,b:int) -> mp.mpf:
 
 def hyperp(N:int,n1:int,n2:int,k:int) -> mp.mpf:
     """
-    Returns the cdf of a hypergeometric test.
+    Returns the pmf of a hypergeometric test.
     
     Parameters
     ----------
@@ -1152,12 +1220,14 @@ def hypert(N:int,n1:int,n2:int,k:int) -> mp.mpf:
        # print()
     return (1-cdf)
 
-def rrho_plot(list1:list, list2:list, list3:list, list4:list, celltype:str, population:int ,upperbound:int=50) -> Tuple[np.array,np.array,np.array,np.array]:
+def rrho_plot(name:str, list1:list, list2:list, list3:list, list4:list, celltype:str, population:int ,upperbound:int=50, save = None) -> Tuple[np.array,np.array,np.array,np.array]:
     """
     Generates data for RRHO graph used to compare the positive and negative markers found using real-profiled and semi-profiled datasets.
     
     Parameters
     ----------
+    name
+         project name
     list1:
          Positive markers found using the real-profiled dataset
     list2:
@@ -1172,6 +1242,8 @@ def rrho_plot(list1:list, list2:list, list3:list, list4:list, celltype:str, popu
         The population size in hypergeometric test for evaluating the overlap between two gene lists. In our case this will be to total number of genes used.
     upperbound:
         The upperbound for negative log p-value for visualization
+    save
+        Path within the 'figures' folder to save the plot
 
     Returns
     -------
@@ -1311,7 +1383,8 @@ def rrho_plot(list1:list, list2:list, list3:list, list4:list, celltype:str, popu
     cbar_ax = fig.add_axes([1, 0.025, 0.04, 0.95])
     cbar = fig.colorbar(im4, ax=axs[1, 1], fraction=0.046 * 2, pad=0.04,cax=cbar_ax,label='-log10(p)')
     plt.tight_layout()
-    #plt.savefig('results/RRHO50_'+celltype+'.pdf')
+    if save!= None:
+        plt.savefig(name + '/figures/'+save,dpi=600,bbox_inches='tight')
     plt.show()
     
     
@@ -1320,12 +1393,14 @@ def rrho_plot(list1:list, list2:list, list3:list, list4:list, celltype:str, popu
 
 
 
-def rrho(gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str,celltype:str) -> None:
+def rrho(name,gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str,celltype:str, save = None) -> Tuple[np.array,np.array,np.array,np.array]:
     """
     Use RRHO graph to compare the positive and negative markers found using real-profiled and semi-profiled datasets.
     
     Parameters
     ----------
+    name
+        Project name
     gtdata:
         Real-profiled (ground truth) data
     semisdata:
@@ -1334,14 +1409,23 @@ def rrho(gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str,cellt
         The key in anndata.AnnData.obs for storing the cell type information
     celltype:
         The selected cell type to analyze 
-
+    save
+        Path within the 'figures' folder to save the plot
+    
     Returns
     -------
-        None
+    rrho_matrix1
+        Values for the first quadrant
+    rrho_matrix2
+        Values for the second quadrant
+    rrho_matrix3
+        Values for the third quadrant
+    rrho_matrix4
+        Values for the forth quadrant
 
     Example
     -------
-    >>> rrho(gtdata=gtdata,semisdata=semisdata,celltype_key='celltypes',celltype='CD4')
+    >>> _ = rrho(gtdata=gtdata,semisdata=semisdata,celltype_key='celltypes',celltype='CD4')
     """
     
     print('Plotting RRHO for comparing ' + str(celltype) + ' markers.')
@@ -1380,19 +1464,20 @@ def rrho(gtdata:anndata.AnnData,semisdata:anndata.AnnData,celltype_key:str,cellt
     semi_posmarkers = semi_posmarkers[:ngenes]
     gt_negmarkers = gt_negmarkers[:ngenes]
     semi_negmarkers = semi_negmarkers[:ngenes]
-    rmat = rrho_plot(list1 = gt_posmarkers, \
+    rmat = rrho_plot(name = name,\
+                     list1 = gt_posmarkers, \
                      list2 = semi_posmarkers,\
                      list3 = gt_negmarkers,\
                      list4 = semi_negmarkers,\
-                     celltype = celltype, population=population, upperbound = 50)
+                     celltype = celltype, population=population, upperbound = 50,save=save)
     
-    return
+    return rmat
 
 
 
 
 
-def enrichment_comparison(name:str, gtdata:anndata.AnnData, semisdata:anndata.AnnData, celltype_key:str, selectedtype:str)->None:
+def enrichment_comparison(name:str, gtdata:anndata.AnnData, semisdata:anndata.AnnData, celltype_key:str, selectedtype:str, save = None)-> Tuple[np.array,np.array,np.array,np.array]:
     """
     Compare the enrichment analysis results using the real-profiled and semi-profiled datasets. 
     
@@ -1408,14 +1493,23 @@ def enrichment_comparison(name:str, gtdata:anndata.AnnData, semisdata:anndata.An
         The key in anndata.AnnData.obs for storing the cell type information
     selectedtype:
         The selected cell type to analyze 
-
+    save
+        Path within the 'figures' folder to save the plot
+    
     Returns
     -------
-        None
+    CommonDEGs
+        The number of overlapping DEGs between real and semi-profiled data 
+    HypergeometricP
+        P-value of hypergeometric test examining the overlap between two versions of DEGs
+    PearsonR
+        Pearson correlation between bar lengths in real-profiled and semi-profiled bar plots
+    PearsonP
+        P-value of the Pearson correlation test
 
     Example
     -------
-    >>> enrichment_comparison(name, gtdata, semisdata, celltype_key = 'celltypes', selectedtype = 'CD4')
+    >>> _ = enrichment_comparison(name, gtdata, semisdata, celltype_key = 'celltypes', selectedtype = 'CD4')
 
     """
     
@@ -1537,11 +1631,12 @@ def enrichment_comparison(name:str, gtdata:anndata.AnnData, semisdata:anndata.An
     ax1.set_yticks(y)
     ax2.set_yticklabels(terms)
     fig.suptitle(selectedtype + ' GO ('+str(c)+' Overlap DEGs)')
-    #plt.savefig('results/celltype_marker_reactome/'+selectedtype + ' Reactome.pdf',bbox_inches='tight')
-    #plt.savefig('results/celltype_marker_reactome/'+selectedtype + ' Reactome.png',dpi=600,bbox_inches='tight')
+    if save!= None:
+        plt.savefig(name + '/figures/'+save+selectedtype + ' GO.pdf',bbox_inches='tight')
+        plt.savefig(name + '/figures/'+save+selectedtype + ' GO.jpg',dpi=600,bbox_inches='tight')
     plt.show()
 
-    
+    return c, float(hyperpval), res[0], res[1]
     
     
     
@@ -1596,7 +1691,7 @@ def faiss_knn(query:np.array, x:np.array, n_neighbors:int=1) -> np.array:
 
 
 
-def get_error(name:str)->Tuple[list,list,list,list]:
+def get_error(name:str,scpath:str = 'example_data/scdata.h5ad')->Tuple[list,list,list,list]:
     """
     Conclude the semi-profiling history of a project and output the erros, upperbounds, and lower bounds, which are necessary for overall performance evaluation.
 
@@ -1604,6 +1699,8 @@ def get_error(name:str)->Tuple[list,list,list,list]:
     ----------
     name:
         Project name
+    scpath:
+        Path to single-cell data
 
     Returns
     -------
@@ -1627,7 +1724,7 @@ def get_error(name:str)->Tuple[list,list,list,list]:
     # load gound truth
     print('loading and processing ground truth data.')
     st = timeit.default_timer()
-    gtdata = anndata.read_h5ad('example_data/scdata.h5ad')
+    gtdata = anndata.read_h5ad(scpath)
     sids = []
     
     f = open(name + '/sids.txt','r')
@@ -1640,7 +1737,10 @@ def get_error(name:str)->Tuple[list,list,list,list]:
     for i in range(len(sids)):
         sid = sids[i]
         adata = gtdata[gtdata.obs['sample_ids'] == sid]
-        gts.append(np.array(adata.X.todense()))
+        x = adata.X
+        if scipy.sparse.issparse(x):
+            x = x.todense()
+        gts.append(np.array(x))
     ed = timeit.default_timer()
     print('finished processing ground truth',str(ed-st),' seconds')
     
@@ -1684,7 +1784,8 @@ def get_error(name:str)->Tuple[list,list,list,list]:
                 sid = sids[i]
                 represid = sids[representatives[cluster_labels[i]]]
                 xinf = np.load(name + '/inferreddata/' + represid + '_to_' + sid + '.npy')
-                semis.append(np.log1p(xinf))
+                #semis.append(np.log1p(xinf))
+                semis.append(xinf)
         ed = timeit.default_timer()
         print(str(ed-st),'for loading semi-profiled cohort.')
         
@@ -1858,6 +1959,278 @@ def errorcurve(upperbounds:list, lowerbounds:list, semierrors:list, naiveerrors:
     plt.title('Error and Cost as More Representatives Sequenced')
     
     return 
+
+
+
+
+def prop(gttypes ,semitypes, totaltypes):
+    pgt = np.zeros(totaltypes.shape)
+    psemi = np.zeros(totaltypes.shape)
+    for i in range(len(totaltypes)):
+        pgt[i] += (np.array(gttypes) == totaltypes[i]).sum()
+        psemi[i] += (np.array(semitypes) == totaltypes[i]).sum()  ## celltypes2
+    numgt=pgt
+    numsemi=psemi
+    pgt = pgt/pgt.sum()
+    psemi = psemi/psemi.sum()
+    pcor,pval = scipy.stats.pearsonr(pgt,psemi)
+    return pcor,pval,pgt,psemi,numgt,numsemi
+
+def RMSE(p1,p2):
+    p1 = np.array(p1)
+    p2 = np.array(p2)
+    mse = ((p1-p2)**2).mean()
+    rmse = mse**0.5
+    return rmse
+
+def CCCscore(y_pred, y_true, mode='all'):
+    # adapated from Yanshuo et.al's work TAPE
+    # pred: shape{n sample, m cell}
+    if mode == 'all':
+        y_pred = y_pred.reshape(-1, 1)
+        y_true = y_true.reshape(-1, 1)
+    elif mode == 'avg':
+        pass
+    ccc_value = 0
+    for i in range(y_pred.shape[1]):
+        r = np.corrcoef(y_pred[:, i], y_true[:, i])[0, 1]
+        # Mean
+        mean_true = np.mean(y_true[:, i])
+        mean_pred = np.mean(y_pred[:, i])
+        # Variance
+        var_true = np.var(y_true[:, i])
+        var_pred = np.var(y_pred[:, i])
+        # Standard deviation
+        sd_true = np.std(y_true[:, i])
+        sd_pred = np.std(y_pred[:, i])
+        # Calculate CCC
+        numerator = 2 * r * sd_true * sd_pred
+        denominator = var_true + var_pred + (mean_true - mean_pred) ** 2
+        ccc = numerator / denominator
+        ccc_value += ccc
+    return ccc_value / y_pred.shape[1]
+
+
+
+def inspect_data(bulk:str,logged:bool=False,normed:bool = True, geneselection:Union[bool,int]=True, save=None) -> None:
+    """
+    To accommodate users who prefer all-in-one-batch profiling, we have developed hits new function. This function allows users to assess data heterogeneity (using Silhouette scores and bulk data visualization) and determine an approximate number of representative clusters needed for their dataset. Once the number of clusters is established, users can sequence all representatives in one batch to minimize potential batch effects. 
+
+    Parameters
+    ----------
+    name
+        Project name. 
+    bulk
+        Path to bulk data as an h5ad file. Sample IDs should be stored in adata.obs['sample_ids'] and gene names should be stored in adata.var.index. 
+    logged
+        Whether the data has been logged or not
+    normed
+        Whether the library size has been normalized or not
+    geneselection
+        Either a boolean value indicating whether to perform gene selection using the bulk data or not, or a integer specifying the number of highly variable genes should be selected.
+    save
+        Specify a folder for saving figures
+
+    Returns
+    -------
+        None
+    
+    Example
+    --------
+    >>> import scSemiProfiler as semi
+    >>> from scSemiProfiler.utils import *
+    >>> bulk = 'example_data/bulkdata.h5ad'
+    >>> logged = False
+    >>> normed = True
+    >>> geneselection = False
+    >>> inspect_data(bulk,logged,normed,geneselection)
+
+    """
+    
+    
+    print('Presenting dataset heterogeneity information to decide sample batch size')
+    
+    if save != None:
+        if (os.path.isdir(save)) == False:
+            os.system('mkdir '+save)
+
+        
+    bulkdata = anndata.read_h5ad(bulk)
+    
+    
+    if normed == False:
+        if logged == True:
+            print('Bad data preprocessing. Please normalize the library size before log-transformation.')
+            return
+        sc.pp.normalize_total(bulkdata, target_sum=1e4)
+    
+    if logged == False:
+        sc.pp.log1p(bulkdata)
+        
+    # write sample ids
+    sids = list(bulkdata.obs['sample_ids'])
+    
+    
+    if geneselection == False:
+        hvgenes = np.array(bulkdata.var.index)
+    elif geneselection == True:
+        sc.pp.highly_variable_genes(bulkdata, n_top_genes=6000)
+        #sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+        bulkdata = bulkdata[:, bulkdata.var.highly_variable]
+        hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
+    else:
+        sc.pp.highly_variable_genes(bulkdata, n_top_genes = int(geneselection))
+        #sc.pp.highly_variable_genes(bulkdata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+        bulkdata = bulkdata[:, bulkdata.var.highly_variable]
+        hvgenes = (np.array(bulkdata.var.index))[bulkdata.var.highly_variable]
+
+    #dim reduction and clustering
+    if bulkdata.X.shape[0]>100:
+        n_comps = 100
+    else:
+        n_comps = bulkdata.X.shape[0]-1
+    
+    sc.tl.pca(bulkdata,n_comps=n_comps)
+    
+    sc.pp.neighbors(bulkdata)
+    sc.tl.umap(bulkdata)
+    sc.pl.umap(bulkdata)
+    
+    avgs = []
+    xaxis = []
+    for i in range(2,len(sids)):
+        n_clusters = i# max(2,batch*i + batch)
+        xaxis.append(n_clusters)
+        clusterer = KMeans(n_clusters=n_clusters, random_state=i)
+        X = bulkdata.obsm['X_pca']
+        cluster_labels = clusterer.fit_predict(X)
+        silhouette_avg = silhouette_score(X, cluster_labels)
+        avgs.append(silhouette_avg)
+    
+    plt.xlabel('Number of Clusters')
+    plt.plot(xaxis,avgs)
+    plt.title('Average Silhoette Scores')
+    return
+
+
+
+def global_stop_checking(name:str, representatives:list, n_targets:int = 2, celltype_key:str='celltypes' ) -> Tuple[list,list]:
+    """
+    Checking if further representative selection is needed for the global mode. 
+    n_target samples will be randomly selected from the representatives as the dummy target samples. 
+    Other representatives will be used for infer the dummy target samples. A list of inferred samples and 
+    the corresponding round truth will be returned for the user to examine the similarity and decide if further
+    representative selection is needed. Information regarding cell type deconvolution performance will also be presented.
+    
+    Parameters
+    ----------
+    name
+        Project name. 
+    representatives
+        List of representative samples.
+    cluster_labels
+        List of cluster labels.
+    n_target
+        The number of dummy targets.
+    celltype_key
+        The key in adata.obs for storing cell types
+    Returns
+    -------
+    real_target_list
+        List of real-profiled target ground truth
+    inferred_target_list
+        List of inferred target data for comparison
+    
+    Example
+    --------
+    >>> import scSemiProfiler as semi
+    >>> from scSemiProfiler.utils import *
+    >>> name = 'project_name'
+    >>> representatives = [6, 10, 5, 7]
+    >>> real_target_list, inferred_target_list = global_stop_checking(name = name, representatives =representatives, n_target = 2 )
+    >>> # downstram analysis comparing real targets and inferred targets
+    """
+    
+    sids = []
+    f = open(name + '/sids.txt','r')
+    lines = f.readlines()
+    for l in lines:
+        sids.append(l.strip())
+    f.close()
+    
+    
+    repsdata = []
+    for i in range(len(representatives)):
+        r = representatives[i]
+        repsdata.append(anndata.read_h5ad(name + '/sample_sc/'+sids[r]+'.h5ad'))
+    
+    repspseudobulk = []
+    for adata in repsdata:
+        repspseudobulk.append( adata.X.mean(axis=0) )
+    repspseudobulk = np.array(repspseudobulk)
+    repspseudobulk = repspseudobulk.reshape((-1, adata.X.shape[1]))
+    
+    repspseudobulk = anndata.AnnData(repspseudobulk)
+    if repspseudobulk.X.max()>20:
+        sc.pp.log1p(repspseudobulk)
+    sc.tl.pca(repspseudobulk)
+    dismtx = repspseudobulk.obsm['X_pca']
+    
+    real_target_list = []
+    inferred_target_list = []
+    targets = random.sample(representatives,2)
+
+    # find ref
+    refs=[]
+    for i in range(n_targets):
+        t = dismtx[i]
+        dists = ((dismtx - t)**2).sum(axis=1)
+        sorted_indices = np.argsort(dists)
+        index_second_smallest = sorted_indices[1]
+        refs.append(representatives[index_second_smallest])
+        real_target_list.append(repsdata[index_second_smallest])
+    
+    
+    # infer
+    for i in range(n_targets):
+        tgt = targets[i]
+        rep = refs[i]
+        inferredtgt = tgtinfer(name = name, representative = rep, target = tgt, device = 'cuda:0') 
+        
+    for i in range(n_targets):
+        tgt = targets[i]
+        adata = anndata.read_h5ad(name + '/sample_sc/'+sids[tgt]+'.h5ad')
+        inferred_target_list.append(adata)
+    
+    xtrain = []
+    ytrain = []
+    for i in range(len(real_target_list)):
+        adata = real_target_list[i]
+        xtrain.append(np.array(adata.X))
+        sample_celltype = list(adata.obs[celltype_key])
+        ytrain = ytrain + sample_celltype
+    xtrain = np.concatenate(xtrain, axis=0)
+    if xtrain.max()>10:
+        xtrain = np.log1p(xtrain)
+    ytrain = np.array(ytrain)
+    totaltypes = np.unique(ytrain)
+    
+    annotator = MLPClassifier(hidden_layer_sizes=(200,)) 
+    annotator.fit((xtrain),ytrain)
+
+    print('Pearson correlation between cell type proportions in inferred and ground truth samples:')
+    for i in range(n_targets):
+        x = inferred_target_list[i].X
+        if x.max()>20:
+            x= np.log1p(x)
+        predicted_celltype = annotator.predict(x)
+        inferred_target_list[i].obs[celltype_key] = predicted_celltype
+        realtypes = celltype_proportion(real_target_list[i],totaltypes)
+        semitypes = celltype_proportion(inferred_target_list[i],totaltypes)
+        print(scipy.stats.pearsonr(realtypes ,semitypes ))
+    
+    return real_target_list, inferred_target_list
+
 
 
 

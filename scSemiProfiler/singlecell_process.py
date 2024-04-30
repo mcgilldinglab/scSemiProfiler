@@ -18,10 +18,27 @@ from scipy import stats
 from sklearn.neighbors import kneighbors_graph
 from matplotlib.pyplot import figure
 
-from typing import Tuple
+from typing import Tuple,Union
 from torch.utils.data import Dataset
 
 
+
+def hamster_to_human(hamster_gene_list):
+    f=open('scSemiProfiler/hamster_to_human_gene.txt','r')
+    lines = f.readlines()
+    dic = {}
+    for l in lines:
+        l = l.strip().split()
+        if len(l)==2:
+            dic[l[0]]=l[1]
+    human_gene_list = []
+    for g in hamster_gene_list:
+        if g in dic.keys():
+            human_gene_list.append(dic[g])
+        else:
+            human_gene_list.append(g)
+    
+    return human_gene_list
 
 def gen_tf_gene_table(genes, tf_list, dTD):
     """
@@ -236,7 +253,7 @@ def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple
 
 
     
-def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, cellfilter:bool = False, threshold:float = 1e-3, geneset:bool = True, weight:float=0.5, k:int=15) -> None:
+def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, cellfilter:bool = False, threshold:float = 1e-3, geneset:Union[bool,str] = True, weight:float=0.5, k:int=15) -> None:
     """
     Process the reprsentatives' single-cell data, including preprocessing and feature augmentations. 
 
@@ -301,7 +318,7 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
         sc.pp.normalize_total(scdata, target_sum=1e4)    
     
     # convert to dense if sparse
-    if type(scdata.X) == scipy.sparse._csr.csr_matrix:
+    if scipy.sparse.issparse(scdata.X):
         X = np.array(scdata.X.todense())
         tempdata = anndata.AnnData(X)
         tempdata.obs = scdata.obs
@@ -327,19 +344,31 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
     # store singlecell data, geneset score
     if (os.path.isdir(name + '/sample_sc')) == False:
         os.system('mkdir ' + name + '/sample_sc')
-    if (os.path.isdir(name + '/geneset_scores')) == False:
-        os.system('mkdir ' + name + '/geneset_scores')
+
+    
+    
+    
+    
+    if geneset != False:
+        if (os.path.isdir(name + '/geneset_scores')) == False:
+            os.system('mkdir ' + name + '/geneset_scores')
         
-    if geneset == True:
         prior_name = "c2.cp.v7.4.symbols.gmt" 
-        print('Computing geneset scores')
+        if (geneset == True) or (geneset == 'human'):
+            print('Computing human geneset scores')
+        elif geneset == 'hamster':
+            print('Computing hamster geneset scores')
         zps=[]
         for sid in sids:
             adata = scdata[scdata.obs['sample_ids'] == sid]
             X = adata.X
 
             gene_sets_path = "genesets/"
-            genes_upper = [g.upper() for g in list(adata.var.index)]
+            genes = list(adata.var.index)
+            
+            if geneset == 'hamster':
+                genes = hamster_to_human(genes)
+            genes_upper = [g.upper() for g in genes]
             N = adata.X.shape[0]
             G = len(genes_upper)
             gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
