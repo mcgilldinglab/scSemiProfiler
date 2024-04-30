@@ -6,7 +6,7 @@ scSemiProfiler is an innovative computational tool combining deep generative mod
 
 For comprehensive details, including API references, usage examples, and tutorials, please refer to our [documentation](https://scsemiprofiler.readthedocs.io/en/latest/). The example is provided as a Jupyter Notebook. Check [here](https://jupyter.org/) for information about Jupyter Notebook.
 
-Update: global mode functions "inspect_data" and "global_stop_checking" have been added. Check print(scSemiProfiler.utils.inspect_data.__doc__) and print(scSemiProfiler.utils.global_stop_checking.__doc__) for details.
+Update: global mode functions "inspect_data" and "global_stop_checking" have been added. Check `print(scSemiProfiler.utils.inspect_data.__doc__)` and `print(scSemiProfiler.utils.global_stop_checking.__doc__)` for details.
 
 ## Method Overview
 ![flowchart](./method.jpg)
