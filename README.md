@@ -4,7 +4,7 @@
 
 scSemiProfiler is an innovative computational tool combining deep generative models and active learning to economically generate single-cell data for biological studies. It efficiently transforms bulk cohort data into detailed single-cell data using templates from selected representative samples. More details are in our [manuscript](https://www.biorxiv.org/content/10.1101/2023.11.20.567929v1). 
 
-For comprehensive details, including API references, usage examples, and tutorials, please refer to our [documentation](https://scsemiprofiler.readthedocs.io/en/latest/).
+For comprehensive details, including API references, usage examples, and tutorials, please refer to our [documentation](https://scsemiprofiler.readthedocs.io/en/latest/). The example is provided as a Jupyter Notebook. Check [here](https://jupyter.org/) for information about Jupyter Notebook.
 
 Update: global mode functions "inspect_data" and "global_stop_checking" have been added. Check print(scSemiProfiler.utils.inspect_data.__doc__) and print(scSemiProfiler.utils.global_stop_checking.__doc__) for details.
 
