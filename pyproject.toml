@@ -33,5 +33,6 @@ doc = [
     "prompt-toolkit<3.0.0",
     "sphinxcontrib-applehelp==1.0.1" ,
     #"sphinx_autodoc_typehints"
-    "sphinx-autodoc-typehints<1.12"
+    "sphinx-autodoc-typehints<1.12",
+    "sphinxcontrib_devhelp==1.0.2"
 ]
