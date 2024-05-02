@@ -82,6 +82,7 @@ Global Mode
 
 .. autosummary::
    :toctree: api
+
    scSemiProfiler.utils.inspect_data
    scSemiProfiler.utils.global_stop_checking
 
