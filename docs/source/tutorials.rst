@@ -10,7 +10,7 @@ You can also download our `GitHub repository <https://github.com/mcgilldinglab/s
     conda install ipykernel
     python -m ipykernel install --user --name=semiprofiler --display-name="scSemiProfiler"
 
-Then open the notebook. You can now select the kernel "scSemiProfiler" in Jupyter Notebook and run our example notebook. Instructions of running Jupyter Notebook can be found `here <https://jupyter.org/>`. 
+Then open the notebook. You can now select the kernel "scSemiProfiler" in Jupyter Notebook and run our example notebook. Instructions of running Jupyter Notebook can be found `here <https://jupyter.org/>`_. 
 
 
 .. toctree::
