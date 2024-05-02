@@ -11,6 +11,7 @@ python:
       path: .
       extra_requirements:
       - doc
+    - sphinxcontrib.applehelp==1.0.7
       
 sphinx:
   configuration: docs/source/conf.py
