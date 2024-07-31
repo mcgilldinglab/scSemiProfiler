@@ -8,6 +8,8 @@ import pdb,sys,os
 from .representative_selection import activeselection
 from .get_eg_representatives import get_eg_representatives
 from .initial_setup import initsetup
+#from .initial_setup import inspect_data
+
 from .inference import scinfer
 from .singlecell_process import scprocess 
 from .utils import *

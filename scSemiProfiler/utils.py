@@ -212,7 +212,7 @@ def visualize_recon(name:str, representative:Union[int,str], save = None) -> Non
     sc.pl.umap(vdata,color='reconstruction',alpha=0.5,palette=palette,save=save)
 
 # visualizing inference performance for a target sample
-def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list, realdata_path:str = 'example_data/scdata.h5ad', save = None) -> None:
+def visualize_inferred(name:str, target:int, representatives:list, cluster_labels:list, realdata_path:str = 'example_data/scdata.h5ad', n_comps:int=100, save = None) -> None:
     """
     Visualize the inference performance by plotting the representative, inferred target, and target ground truth in the same UMAP.
 
@@ -228,6 +228,8 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
         Cluster labels
     realdata_path:
         Path to the real-profiled single-cell data
+    n_comps:
+        The number of PCs in PCA
     save
         Path within the 'figures' folder to save the plot
         
@@ -292,7 +294,7 @@ def visualize_inferred(name:str, target:int, representatives:list, cluster_label
         rc.append('Target ground truth')
     vdata.obs['inference'] = rc
     sc.pp.log1p(vdata)
-    sc.tl.pca(vdata)
+    sc.tl.pca(vdata,n_comps=n_comps)
     sc.pp.neighbors(vdata)
     sc.tl.umap(vdata)
     
@@ -1740,6 +1742,9 @@ def get_error(name:str,scpath:str = 'example_data/scdata.h5ad')->Tuple[list,list
         x = adata.X
         if scipy.sparse.issparse(x):
             x = x.todense()
+        x = np.array(x)
+        if x.max()>20:
+            x = np.log1p(x)
         gts.append(np.array(x))
     ed = timeit.default_timer()
     print('finished processing ground truth',str(ed-st),' seconds')
@@ -1784,7 +1789,8 @@ def get_error(name:str,scpath:str = 'example_data/scdata.h5ad')->Tuple[list,list
                 sid = sids[i]
                 represid = sids[representatives[cluster_labels[i]]]
                 xinf = np.load(name + '/inferreddata/' + represid + '_to_' + sid + '.npy')
-                #semis.append(np.log1p(xinf))
+                if xinf.max() > 20:
+                    xinf = np.log1p(xinf)
                 semis.append(xinf)
         ed = timeit.default_timer()
         print(str(ed-st),'for loading semi-profiled cohort.')
@@ -1794,7 +1800,7 @@ def get_error(name:str,scpath:str = 'example_data/scdata.h5ad')->Tuple[list,list
         # pca 
         t_start = timeit.default_timer()
         X = np.concatenate([np.concatenate(gts,axis=0),np.concatenate(semis,axis=0)],axis=0)
-        X = np.log(X+1)
+        #X = np.log(X+1)
         reducer =  PCA(n_components = 100)#PCA(n_components = 100)#,svd_solver = 'randomized')#randomized_svd(n_components=100)  #PCA(n_components=100)#
         X_reduced = reducer.fit_transform(X)
         t_end = timeit.default_timer()

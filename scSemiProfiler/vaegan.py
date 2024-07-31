@@ -3,6 +3,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from typing import Callable, Iterable, Optional, List, Union,Dict, Literal
 import collections
+import logging
 import numpy as np
 import anndata
 
@@ -41,13 +42,6 @@ from scvi.data.fields import (
 from scvi.module import Classifier 
 from scvi.utils._docstrings import devices_dsp
 
-
-import logging
-scvi.settings.verbosity = logging.ERROR
-scvi.settings.warnings_stacklevel = 1
-import warnings
-warnings.filterwarnings("ignore")
-logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 
 def reparameterize_gaussian(mu, var):
@@ -708,8 +702,12 @@ class myVAE(BaseModuleClass):
         self,
         tensors,
         n_samples=1,
-        bound=10,
+        library_size=1e4,
+        bound=None,
     ) -> np.ndarray:
+ 
+        if bound == None:
+            bound = library_size / 1e3
     
         inference_kwargs = dict(n_samples=n_samples)
         inference_outputs, generative_outputs, = self.forward(
@@ -756,14 +754,7 @@ class myVAE(BaseModuleClass):
 
     def get_reconstruction_loss(self, x, px_scale,px_rate, px_r, px_dropout, variances, bulk) -> torch.Tensor:
         if type(variances) != type(None):
-
-
             normv = variances
-            
-            apd = torch.ones(x.shape[1] - variances.shape[0])
-            apd = apd.to(normv.device)
-            normv = torch.cat([variances,apd],dim=0)
-            
             vs,idx=normv.sort()
             threshold =  vs[x.shape[1]//2] #normv.mean()
             normv = torch.tensor((normv>threshold)) 
@@ -896,28 +887,25 @@ class D(torch.nn.Module):
 
 
 class AdversarialTrainingPlan(TrainingPlan):
-
     def __init__(
         self,
         module: BaseModuleClass,
         lr=1e-3,
         lr2=1e-3,
-        kappa = 4040*0.001,
-        weight_decay=1e-6,
+        kappa = 4.0,
+        weight_decay = 1e-6,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
         reduce_lr_on_plateau: bool = False,
         lr_factor: float = 0.6,
         lr_patience: int = 30,
         lr_threshold: float = 0.0,
-        gan: bool = False,
         lr_scheduler_metric: Literal[
             "elbo_validation", "reconstruction_loss_validation", "kl_local_validation"
         ] = "elbo_validation",
         lr_min: float = 0,
-        adversarial_classifier: Union[bool, Classifier] = False,
+        adversarial_classifier = True,
         scale_adversarial_loss: Union[float, Literal["auto"]] = "auto",
-        clip = None,
         **loss_kwargs,
     ):
         super().__init__(
@@ -934,14 +922,14 @@ class AdversarialTrainingPlan(TrainingPlan):
             lr_min=lr_min,
             **loss_kwargs,
         )
-        self.gan = gan
+        if lr2>0:
+            #self.lr_factor = 1
+            self.lr_patience = 9999
+        self.kappa = kappa
         self.n_output_classifier = 1
         self.lr2 = lr2
-        self.lr = lr
-        self.kappa = kappa
         self.adversarial_classifier = adversarial_classifier
         self.scale_adversarial_loss = scale_adversarial_loss
-        self.clip = clip
         self.automatic_optimization = False
         
         
@@ -959,54 +947,22 @@ class AdversarialTrainingPlan(TrainingPlan):
         using_native_amp=False,
         using_lbfgs=False
     ):
-        # update discriminator every step
+        '''
         if optimizer_idx == 1:
             optimizer.step(closure=optimizer_closure)
-            #for p in self.adversarial_classifier.parameters():
-            #    p.data.clamp_(-1, 1)
-            
-        # update generator every 5 steps
         if optimizer_idx == 0:
             if True: #(batch_idx + 1) % 2 == 0:
-                # the closure (which includes the `training_step`) will be executed by `optimizer.step`
-                
-
-                    
                 optimizer.step(closure=optimizer_closure)
             else:
-                #if type(self.clip)!=type(None):
-                #    print(self.clip)
-                #    torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
-                # call the closure by itself to run `training_step` + `backward` without an optimizer step
-                optimizer_closure()
+                optimizer_closure()'''
+        pass
     
-    
-    def configure_gradient_clipping(self, optimizer, optimizer_idx, gradient_clip_val, gradient_clip_algorithm):
-        if optimizer_idx == 0:
-            # Lightning will handle the gradient clipping
-            
-            if type(self.clip)!=type(None):
-                #print(self.clip)
-                #torch.nn.utils.clip_grad_norm(self.module.parameters(), self.clip)
-                self.clip_gradients(
-                    optimizer, gradient_clip_val=self.clip, gradient_clip_algorithm=gradient_clip_algorithm
-                )
-        #elif optimizer_idx == 1:
-        #    self.clip_gradients(
-        #        optimizer, gradient_clip_val=gradient_clip_val * 2, gradient_clip_algorithm=gradient_clip_algorithm
-        #    )     
 
     def training_step(self, batch, batch_idx):
         """Training step for adversarial training."""
         if "kl_weight" in self.loss_kwargs:
             self.loss_kwargs.update({"kl_weight": self.kl_weight})
-        kappa = (
-            1 - self.kl_weight
-            if self.scale_adversarial_loss == "auto"
-            else self.scale_adversarial_loss
-        )
-     
-
+        kappa = self.kappa
         opts = self.optimizers()
         if not isinstance(opts, list):
             opt1 = opts
@@ -1014,51 +970,51 @@ class AdversarialTrainingPlan(TrainingPlan):
         else:
             opt1, opt2 = opts
 
-        inference_outputs, generative_outputs, scvi_loss = self.forward(
-            batch, loss_kwargs=self.loss_kwargs
-        )
-  
-        loss = scvi_loss.loss
-        # fool classifier if doing adversarial training
-        if kappa > 0 and self.adversarial_classifier is not False:
-
-            px_scale = generative_outputs['px_scale']
-            px_r = generative_outputs['px_r']
-            px_rate = generative_outputs['px_rate']
-            px_dropout = generative_outputs['px_dropout']
-
-            dist = ZeroInflatedNegativeBinomial(
-            mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
-            )
-            xh = dist.mean
-
-            valid = torch.ones(xh.size(0), 1)
-            valid = valid.type_as(xh)
-            fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
-            loss = loss + fool_loss 
+        #print('current_epoch',self.current_epoch, self.current_epoch%6)
+        if (self.current_epoch % 6 < 3) or (self.lr2 == 0):
             
-        if self.gan:
-            prog_bar = False
+            inference_outputs, generative_outputs, scvi_loss = self.forward(
+                batch, loss_kwargs=self.loss_kwargs
+            )
+
+            loss = scvi_loss.loss
+            # fool classifier if doing adversarial training
+            if kappa > 0 and self.adversarial_classifier is not False:
+
+                px_scale = generative_outputs['px_scale']
+                px_r = generative_outputs['px_r']
+                px_rate = generative_outputs['px_rate']
+                px_dropout = generative_outputs['px_dropout']
+
+                dist = ZeroInflatedNegativeBinomial(
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+                )
+                xh = dist.mean
+
+                valid = torch.ones(xh.size(0), 1)
+                valid = valid.type_as(xh)
+                fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
+                loss = loss + fool_loss 
+
+            self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+            self.log("fool_loss", fool_loss, on_epoch=True)
+            
+            scvi_loss.loss = loss
+            self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
+            opt1.zero_grad()
+            self.manual_backward(loss)
+            opt1.step()
+            
+            f = open('vaegan_train.txt','a')
+            f.write('1, '+str(loss) + ',  '+str(fool_loss) + '\n')
+            f.close()
+            
+            #print(1, loss,fool_loss)
+            
         else:
-            prog_bar = True
-        
-        self.log("train_loss", loss, on_epoch=True, prog_bar=prog_bar)
-        self.log("fool_loss", fool_loss, on_epoch=True)
-        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
-        opt1.zero_grad()
-        self.manual_backward(loss)
-        opt1.step()
-        
-        #if self.lr > 1e-5:
-            #f = open('fast_generator_train.txt','a')
-            #f.write('1, '+str(loss) + ',  '+str(fool_loss) + '\n')
-            #f.close()
-
-        # train adversarial classifier
-        # this condition will not be met unless self.adversarial_classifier is not False
-        if opt2 is not None:
-
-            xh,__ = self.module.nb_sample(batch)
+            
+            xh = self.module.sample(batch)
+            #xh,__ = self.module.nb_sample(batch)
             xh = xh.to(self.module.device)
             x = batch[REGISTRY_KEYS.X_KEY]
             
@@ -1074,13 +1030,42 @@ class AdversarialTrainingPlan(TrainingPlan):
             opt2.zero_grad()
             self.manual_backward(loss)
             opt2.step()
+            
+            
+            f = open('vaegan_train.txt','a')
+            f.write('2, '+str(fake_loss) + ',  '+str(true_loss)+ '\n')
+            f.close()
+            #print(2, fake_loss,true_loss)
 
-            #if self.lr2 > 1e-5:
-            #    f = open('fast_generator_train.txt','a')
-             #   f.write('2, '+str(loss) + ',  '+str(fool_loss) + '\n')
-             #   f.close()
+            '''
+            #### debug
+            inference_outputs, generative_outputs, scvi_loss = self.forward(
+                batch, loss_kwargs=self.loss_kwargs
+            )
 
-        
+            loss = scvi_loss.loss
+            # fool classifier if doing adversarial training
+            if kappa > 0 and self.adversarial_classifier is not False:
+
+                px_scale = generative_outputs['px_scale']
+                px_r = generative_outputs['px_r']
+                px_rate = generative_outputs['px_rate']
+                px_dropout = generative_outputs['px_dropout']
+
+                dist = ZeroInflatedNegativeBinomial(
+                mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
+                )
+                xh = dist.mean
+
+                valid = torch.ones(xh.size(0), 1)
+                valid = valid.type_as(xh)
+                fool_loss = self.loss_adversarial_classifier(self.adversarial_classifier(xh), valid) * kappa
+                loss = loss + fool_loss 
+
+            self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+            self.log("fool_loss", fool_loss, on_epoch=True)
+            #print(1, loss,fool_loss)'''
+            
     def configure_optimizers(self):
         params1 = filter(lambda p: p.requires_grad, self.module.parameters())
   
@@ -1105,27 +1090,27 @@ class AdversarialTrainingPlan(TrainingPlan):
                 },
             )
 
-        if self.adversarial_classifier is not False:
-            params2 = filter(
-                lambda p: p.requires_grad, self.adversarial_classifier.parameters()
-            )
-            optimizer2 = torch.optim.Adam(
-                params2, lr=self.lr2, eps=0.01, weight_decay=self.weight_decay
-            )
-            config2 = {"optimizer": optimizer2}
+        #if self.adversarial_classifier is not False:
+        params2 = filter(
+            lambda p: p.requires_grad, self.adversarial_classifier.parameters()
+        )
+        optimizer2 = torch.optim.Adam(
+            params2, lr=self.lr2, eps=0.01, weight_decay=self.weight_decay
+        )
+        config2 = {"optimizer": optimizer2}
 
-            # bug in pytorch lightning requires this way to return
-            opts = [config1.pop("optimizer"), config2["optimizer"]]
-            if "lr_scheduler" in config1:
-                config1["scheduler"] = config1.pop("lr_scheduler")
-                scheds = [config1]
-                return opts, scheds
-            else:
-                return opts
+        # bug in pytorch lightning requires this way to return
+        opts = [config1.pop("optimizer"), config2["optimizer"]]
+        if "lr_scheduler" in config1:
+            config1["scheduler"] = config1.pop("lr_scheduler")
+            scheds = [config1]
+            return opts, scheds
+        else:
+            return opts
 
         return config1
-    
 
+    
     
 class fastgenerator(
     BaseModelClass,VAEMixin
@@ -1177,6 +1162,7 @@ class fastgenerator(
         )
         self.adversarial_classifier = D(indim = self.module.n_input)
         
+        
         self._model_summary_string = (
             "SCVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, gene_likelihood: {}"
@@ -1201,7 +1187,6 @@ class fastgenerator(
         batch_size: int = 128,
         early_stopping: bool = False,
         plan_kwargs: Optional[dict] = None,
-        gan = False,
         **trainer_kwargs,
     ):
         if max_epochs is None:
@@ -1217,15 +1202,11 @@ class fastgenerator(
             batch_size=batch_size,
         )
         
-        #training_plan = AdversarialTrainingPlan(self.module, 
-        #                                        indim = self._adata.X.shape[1], #- self.geneset_len,
-        #                                        adversarial_classifier=self.adversarial_classifier ,
-        #                                        **plan_kwargs)
-        
         training_plan = AdversarialTrainingPlan(self.module, 
-                                        adversarial_classifier = self.adversarial_classifier,
-                                        gan = gan,
-                                        **plan_kwargs)
+                                                adversarial_classifier=self.adversarial_classifier ,
+                                                **plan_kwargs)
+        
+
         
         self.training_plan = training_plan
         
@@ -1233,11 +1214,6 @@ class fastgenerator(
         trainer_kwargs[es] = (
             early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
         )
-        
-        #if gan:
-            
-            #trainer_kwargs['enable_progress_bar'] = False
-            #trainer_kwargs['logger'] = NoOpLogger()
         
         runner = TrainRunner(
             self,
