@@ -777,14 +777,22 @@ def compare_umaps(
     sc.pp.neighbors(combdata,n_neighbors=50)
     sc.tl.umap(combdata)
     
-    sc.pl.umap(combdata,color = 'cohort', title = 'Real-profiled VS Semi-profiled', save = save + 'real_vs_semi')
+    if save!=None:
+        savecomb = save + 'real_vs_semi'
+        savereal = save + 'real'
+        savesemi = save + 'semi'
+    else:
+        savecomb = None
+        savereal = None
+        savesemi = None
+    sc.pl.umap(combdata,color = 'cohort', title = 'Real-profiled VS Semi-profiled', save = savecomb)
     
     
     semidata.obsm['X_umap'] = combdata.obsm['X_umap'][gtdata.X.shape[0]:]
     gtdata.obsm['X_umap'] = combdata.obsm['X_umap'][:gtdata.X.shape[0]]
     
-    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled', save = save+'real')
-    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled', save = save+'semi')
+    sc.pl.umap(gtdata,color = 'celltypes',title = 'Real-profiled', save = savereal)
+    sc.pl.umap(semidata,color = 'celltypes',title = 'Semi-profiled', save = savesemi)
     
     return combdata,gtdata,semidata
 
