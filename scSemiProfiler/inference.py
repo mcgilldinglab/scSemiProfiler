@@ -134,8 +134,8 @@ def fastrecon(name:str, sid:str, device:str='cuda:0',k:int=15,diagw:float=1.0,va
     # train
     model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
 
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':40.0},use_gpu=device)
-    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':40.0},use_gpu=device)
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':4.0},use_gpu=device)
+    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':4.0},use_gpu=device)
 
     # save model
     if save == True:
@@ -209,9 +209,9 @@ def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],devic
 
 
     model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
-
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':40.0},use_gpu=device)
-    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':40.0},use_gpu=device)
+    batch_size = adata.X.shape[0]
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':40.0},use_gpu=device,,batch_size=batch_size)
+    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':40.0},use_gpu=device,,batch_size=batch_size)
     
     
     if save == True:
