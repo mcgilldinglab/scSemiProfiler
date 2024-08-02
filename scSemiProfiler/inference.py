@@ -9,7 +9,6 @@ from anndata import AnnData
 import scanpy as sc
 from sklearn.neighbors import kneighbors_graph
 import gc
-#from .fast_generator import *
 from typing import Union, Tuple
 import pickle
 
@@ -21,7 +20,6 @@ import logging
 import pytorch_lightning as pl
 #logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pytorch_lightning").setLevel(logging.CRITICAL)
-
 
 from .vaegan import *
 
@@ -206,12 +204,9 @@ def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],devic
     else:
         model.module.load_state_dict(premodel.module.state_dict())
     
-
-
-    model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
     batch_size = adata.X.shape[0]
-    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':40.0},use_gpu=device,,batch_size=batch_size)
-    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':40.0},use_gpu=device,,batch_size=batch_size)
+    model.train(max_epochs=vaesteps, plan_kwargs={'lr':lr,'lr2':0,'kappa':40.0},use_gpu=device)
+    model.train(max_epochs=gansteps*3, plan_kwargs={'lr':lr,'lr2':lr,'kappa':40.0},use_gpu=device)
     
     
     if save == True:
