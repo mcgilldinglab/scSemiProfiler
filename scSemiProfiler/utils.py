@@ -26,7 +26,37 @@ import random
 import faiss
 from sklearn.decomposition import PCA
 
+def set_representatives(name:str, representatives_list:list, iteration:int = 0):
+    """
+    Specify the reference samples for single-cell deconvolution. 
+    
+    Parameters
+    ----------
+    name
+        Project name. 
+    batch 
+        Representative selection batch size. 
+    
+    Returns
+    -------
+        None
+    
+    Example
+    --------
+    >>> scSemiProfiler.set_representatives(name = 'deconvolution_example', representatives_list = [6])
 
+    
+    """
+    if iteration == 0:
+        repfile = 'init_representatives.txt'
+    else:
+        repfile = 'eer_representatives_' + str(iteration) + '.txt'
+    f = open(name + '/status/' + repfile,'w')
+    for rep in representatives_list:
+        f.write(str(rep) + '\n')
+    f.close()
+    
+    return
 
 def get_cohort_sc(name:str, path:str, cohort_name:str, representative_ids:list) -> None:
     """
