@@ -8,6 +8,19 @@ For comprehensive details, including API references, usage examples, and tutoria
 
 Update: global mode functions "inspect_data" and "global_stop_checking" have been added. Check `print(scSemiProfiler.utils.inspect_data.__doc__)` and `print(scSemiProfiler.utils.global_stop_checking.__doc__)` for details.
 
+## Table of Contents
+- [Application Scenario](#application-scenario)
+- [Method Overview](#method-overview)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Results reproduction](#results-reproduction)
+- [Credits](#credits)
+- [Contacts](#contacts)
+
+## Application scenario
+1. Semi-profile a cohort: with bulk data for a cohort, select a few representative samples for real single-cell sequencing and computationally generate single-cell data for the rest samples. Getting single-cell data using less than 1/3 cost. Example in 'example.ipynb'.
+2. Single-cell level deconvolution: providing bulk data and single-cell reference, generate the single-cell data of the target sample and annotate the cell type. See details in 'deconvolution_example.ipynb'.
+
 ## Method Overview
 ![flowchart](./method.jpg)
 For an interested cohort, scSemiProfiler runs the following steps to generate single-cell data for all samples.
@@ -21,14 +34,6 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 **d**, Representative Selection Decision: Decisions are made on selecting additional representatives, considering budget limits and current representative effectiveness. An active learning algorithm, leveraging bulk data and the generative model insights, identifies new optimal representatives. These are then sequenced (**b**) and serve as and integrated as new references in the single-cell inference process (**c**). This active learning step is optional if the user prefers the all-in-one “global mode”.
 
 **e**, Comprehensive Downstream Analyses: This final panel highlights the extensive analyses possible with semi-profiled single-cell data. It underscores the model’s ability to yield deep, diverse insights, demonstrating the full potential and broad applicability of the semi-profiled data.
-
-
-## Table of Contents
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Results reproduction](#results-reproduction)
-- [Credits](#credits)
-- [Contacts](#contacts)
 
 
 ## Prerequisites
