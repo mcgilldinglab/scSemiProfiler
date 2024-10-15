@@ -2,28 +2,31 @@
 
 # scSemiProfiler: Advancing Large-scale Single-cell Studies through Semi-profiling with Deep Generative Models and Active Learning
 
-scSemiProfiler is an innovative computational tool combining deep generative models and active learning to economically generate single-cell data for biological studies. It efficiently transforms bulk cohort data into detailed single-cell data using templates from selected representative samples. More details are in our [manuscript](https://www.nature.com/articles/s41467-024-50150-1). Please consider citing it if you find our tool useful.
 
-For comprehensive details, including API references, usage examples, and tutorials, please refer to our [documentation](https://scsemiprofiler.readthedocs.io/en/latest/). The example is provided as a Jupyter Notebook. Check [here](https://jupyter.org/) for information about Jupyter Notebook.
+**scSemiProfiler** is an innovative computational tool that combines deep generative models and active learning to economically generate single-cell data for biological studies. It supports two main application scenarios: **semi-profiling**, which uses deep generative learning and active learning to generate a single-cell cohort with 1/10 to 1/3 sequencing cost, and **single-cell level deconvolution**, which generates single-cell data from bulk data and single-cell references. For more insights, check out our [manuscript on Nature Communications](https://www.nature.com/articles/s41467-024-50150-1), and please consider citing it if you find our method beneficial.
 
-Update: global mode functions "inspect_data" and "global_stop_checking" have been added. Check `print(scSemiProfiler.utils.inspect_data.__doc__)` and `print(scSemiProfiler.utils.global_stop_checking.__doc__)` for details.
+Explore comprehensive details, including API references, usage examples, and tutorials (in [Jupyter notebook](https://jupyter.org/) format), in our [full documentation](https://scsemiprofiler.readthedocs.io/en/latest/) and the README below. 
+
+
+*Update:* New global mode functions `"inspect_data"` and `"global_stop_checking"` have been introduced. For details, use `print(scSemiProfiler.utils.inspect_data.__doc__)` and `print(scSemiProfiler.utils.global_stop_checking.__doc__)`.
+
+
 
 ## Table of Contents
-- [Application Scenario](#application-scenario)
-- [Method Overview](#method-overview)
+- [Application Scenarios](#application-scenarios)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Results reproduction](#results-reproduction)
 - [Credits](#credits)
 - [Contacts](#contacts)
 
-## Application scenario
-1. Semi-profile a cohort: with bulk data for a cohort, select a few representative samples for real single-cell sequencing and computationally generate single-cell data for the rest samples. Getting single-cell data using less than 1/3 cost. Example in 'example.ipynb'.
-2. Single-cell level deconvolution: providing bulk data and single-cell reference, generate the single-cell data of the target sample and annotate the cell type. See details in 'deconvolution_example.ipynb'.
+## Application scenarios
+### 1. Semi-profile a cohort
+With bulk data for a cohort, select a few representative samples using active learning for real single-cell sequencing and computationally generate single-cell data for the rest target samples. Getting single-cell data using less than 1/3 cost. Example in [example.ipynb](example.ipynb).
 
-## Method Overview
+In this semi-profiling workflow, scSemiProfiler applies the following steps to generate single-cell data for all samples in a cohort:
+
 ![flowchart](./method.jpg)
-For an interested cohort, scSemiProfiler runs the following steps to generate single-cell data for all samples.
 
 **a**, Initial Setup: Bulk sequencing is first performed on the entire cohort, with subsequent clustering analysis of this data to pinpoint representative samples, typically those closest to the cluster centroids.
 
@@ -35,6 +38,10 @@ For an interested cohort, scSemiProfiler runs the following steps to generate si
 
 **e**, Comprehensive Downstream Analyses: This final panel highlights the extensive analyses possible with semi-profiled single-cell data. It underscores the model’s ability to yield deep, diverse insights, demonstrating the full potential and broad applicability of the semi-profiled data.
 
+
+
+### 2. Single-cell Level Deconvolution
+This process allows users to deconvolute bulk RNA-seq data from a target sample into single-cell data, using a single-cell reference sample as a guide. Users need to provide bulk data for both the target and reference samples. The single-cell reference can be derived from real sequencing data or any similar online dataset. Once the pipeline is completed, single-cell data for the target sample is generated and can be used for cell type annotation. This includes de novo annotation or utilizing a classifier trained on the reference data. For further guidance, please refer to the [deconvolution_example.ipynb](deconvolution_example.ipynb).
 
 ## Prerequisites
 First, install [Anaconda](https://www.anaconda.com/). You can find specific instructions for different operating systems [here](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html).
