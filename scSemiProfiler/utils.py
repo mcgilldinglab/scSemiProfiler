@@ -407,7 +407,6 @@ def loss_curve(name:str, reprepid:int=None,tgtpid:int=None,stage:int=1, save = N
     return
 
 
-
 def assemble_cohort(name:str,
                     representatives:Union[list,str],
                     cluster_labels:Union[list,str],
@@ -535,8 +534,11 @@ def assemble_cohort(name:str,
                 source.append('Representative')
                 
             ## other keys
+            bulkdata = anndata.read_h5ad(bulkpath)
             for k in sample_info_keys:
-                sampleinfo[k] = sampleinfo[k] + list(adata.obs[k])
+                for j in range(adata.X.shape[0]):
+                    sampleinfo[k].append(bulkdata.obs[k][i])
+                    
         else: # inferred target sample
             # expression
             x = np.load(name + '/inferreddata/' + \
