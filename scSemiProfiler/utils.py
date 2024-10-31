@@ -792,7 +792,11 @@ def compare_umaps(
     
     x0 = np.array(gtdata.X.todense())
     x1 = np.array(semidata.X)
-    x1 = np.log1p(x1)
+    if x0.max()<20:
+        x0 = np.exp(x0)-1
+    if x1.max()<20:
+        x1 = np.exp(x1)-1
+    
     combdata = anndata.AnnData(np.concatenate([x0,x1],axis=0))
     combdata.var = gtdata.var
     combdata.obs[celltype_key] = list(gtdata.obs[celltype_key]) + list(semidata.obs[celltype_key])
