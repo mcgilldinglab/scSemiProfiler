@@ -21,6 +21,7 @@ setup(
     'scikit-learn== 1.3.2',
     'pandas== 2.1.3',
     'jax== 0.4.19',
+    'jaxlib== 0.4.19',
     'igraph==0.9.9',
     'gseapy==1.0.4',                  
     'scvi-tools == 1.0.4'],
