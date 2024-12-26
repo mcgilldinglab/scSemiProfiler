@@ -23,7 +23,8 @@ setup(
     'jax== 0.4.19',
     'jaxlib== 0.4.19',
     'igraph==0.9.9',
-    'gseapy==1.0.4',                  
+    'gseapy==1.0.4'
+    'mpmath'==1.3.0,                  
     'scvi-tools == 1.0.4'],
 )
 
