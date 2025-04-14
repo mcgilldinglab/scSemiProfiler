@@ -9,7 +9,7 @@ Explore comprehensive details, including API references, usage examples, and tut
 
 
 *Updates:*
-- **New Single-Cell Level Deconvolution Pipeline:** A simplified pipeline has been added to scSemiProfiler for generating single-cell data from bulk RNA-seq profiles using a single-cell reference sample. See the [Application Scenarios](#application-scenarios) section for details.
+- **Bulk Deconvolution (Single-cell level) Pipeline:** A simplified pipeline has been added to scSemiProfiler for generating single-cell data from bulk RNA-seq profiles using a single-cell reference sample. See the [Application Scenarios](#application-scenarios) section for details.
 
 - **Global Mode Functions:** New global mode functions `"inspect_data"` and `"global_stop_checking"` have been introduced. For details, use `print(scSemiProfiler.utils.inspect_data.__doc__)` and `print(scSemiProfiler.utils.global_stop_checking.__doc__)`.
 
