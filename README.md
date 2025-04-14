@@ -3,7 +3,7 @@
 # scSemiProfiler: Advancing Large-scale Single-cell Studies through Semi-profiling with Deep Generative Models and Active Learning
 
 
-**scSemiProfiler** is an innovative computational tool that combines deep generative models and active learning to economically generate single-cell data for biological studies. It supports two main application scenarios: **semi-profiling**, which uses deep generative learning and active learning to generate a single-cell cohort with 1/10 to 1/3 sequencing cost, and **single-cell level deconvolution**, which generates single-cell data from bulk data and single-cell references. For more insights, check out our [manuscript in Nature Communications](https://www.nature.com/articles/s41467-024-50150-1), and please consider citing it if you find our method beneficial.
+**scSemiProfiler** is an innovative computational tool that combines deep generative models and active learning to economically generate single-cell data for biological studies. It supports two main application scenarios: **semi-profiling**, which uses deep generative learning and active learning to generate a single-cell cohort with 1/10 to 1/3 sequencing cost, and **single-cell level deconvolution**, which generates single-cell data from bulk data and single-cell references. For more insights, check out our [manuscript in _Nature Communications_](https://www.nature.com/articles/s41467-024-50150-1), and please consider citing it if you find our method beneficial.
 
 Explore comprehensive details, including API references, usage examples, and tutorials (in [Jupyter notebook](https://jupyter.org/) format), in our [full documentation](https://scsemiprofiler.readthedocs.io/en/latest/) and the README below. 
 
