@@ -23,7 +23,7 @@ Explore comprehensive details, including API references, usage examples, and tut
 
 ## Application Scenarios
 
-### 1. Single-Cell Level Deconvolution
+### 1. Bulk Deconvolution (Single-Cell Level)
 This process allows users to deconvolute bulk RNA-seq data from a target sample into single-cell data, using a single-cell reference sample as a guide. Users need to provide bulk data for both the target and reference samples. The single-cell reference can be derived from real sequencing data or any similar online dataset. Once the pipeline is completed, single-cell data for the target sample is generated and can be used for cell type annotation. This includes de novo annotation or utilizing a classifier trained on the reference data. For further guidance, please refer to the [deconvolution_example.ipynb](deconvolution_example.ipynb).
 
 ### 2. Semi-Profile a Cohort
