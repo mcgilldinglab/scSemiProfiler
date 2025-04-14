@@ -18,7 +18,6 @@ Explore comprehensive details, including API references, usage examples, and tut
 - [Methods Overview](#methods-overview)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Results reproduction](#results-reproduction)
 - [Credits and Acknowledgements](#credits-and-acknowledgements)
 - [Contacts](#contacts)
 
