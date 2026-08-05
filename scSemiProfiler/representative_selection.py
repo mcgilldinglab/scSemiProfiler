@@ -308,9 +308,8 @@ def activeselection(name:str, representatives:str,cluster:str,batch:int,lambdasc
         xpca.append(xpcas[offset:offset+datalen[i],:])
         semis.append(xs[offset:offset+datalen[i],:])
         offset = offset + datalen[i]
-    
-    bdata = anndata.read_h5ad(name+'/processed_bulkdata.h5ad')
-    pseudobulk = np.exp(bdata.X) - 1
+
+    pseudobulk = np.exp(bulkdata.X) - 1
     
     nrep, nlabels = pick_batch_eee(reduced_bulk = reduced_bulk,\
                     representatives = rep,\

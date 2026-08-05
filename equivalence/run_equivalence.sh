@@ -55,6 +55,10 @@ done
 fail=0
 banner() { echo; echo "=== $* ==="; }
 
+# ---- focused regressions for resume and memory-copy optimizations ----
+banner "focused regression checks"
+"$PY" "$HERE/regression_checks.py" "$NEW" || fail=1
+
 # ---- unit level: pure functions, on inputs larger than the bundled example ----
 banner "unit-level probe"
 "$PY" "$HERE/unit_probe.py" "$BASE" "$WORK/unit_base.npz" || fail=1

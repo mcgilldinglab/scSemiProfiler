@@ -372,7 +372,7 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
         print('Removing background noise')
         X = np.array(scdata.X)
         cutoff = 1e4*threshold
-        X = X * np.array(X>cutoff)
+        np.multiply(X, X > cutoff, out=X)
         nscdata = anndata.AnnData(X)
         nscdata.obs = scdata.obs
         nscdata.obsm = scdata.obsm
@@ -412,23 +412,31 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
             genes = hamster_to_human(genes)
         genes_upper = [g.upper() for g in genes]
         gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
-        gene_set_matrix_T = np.array(gene_set_matrix).T
         eps = 1e-6
         den = (np.array(gene_set_matrix.sum(axis=1))+eps)
+        # Pathway membership is below 0.4% dense on the bundled human prior.
+        # Sparse multiplication preserves the score values while avoiding a
+        # long-lived ~141 MB dense transpose for 6,030 genes.
+        gene_set_matrix = scipy.sparse.csr_matrix(gene_set_matrix)
 
-        zps=[]
+        need_hvset = not os.path.exists(name + '/hvset.npy')
+        zps = None
+        zp_offset = 0
         for sid in sids:
             adata = scdata[sample_ids == sid]
             X = adata.X
 
-            zp = X.dot(gene_set_matrix_T)
+            zp = gene_set_matrix.dot(np.asarray(X).T).T
             zp = (zp+eps)/den
             zp = zp - eps/den
             np.save(name + '/geneset_scores/' + sid,zp)
-            zps.append(zp)
+            if need_hvset:
+                if zps is None:
+                    zps = np.empty((scdata.n_obs, zp.shape[1]), dtype=zp.dtype)
+                zps[zp_offset:zp_offset + zp.shape[0]] = zp
+                zp_offset += zp.shape[0]
 
-        if not os.path.exists(name + '/hvset.npy'):
-            zps=np.concatenate(zps,axis=0)
+        if need_hvset:
             zdata = anndata.AnnData(zps)
             sc.pp.log1p(zdata)
             sc.pp.highly_variable_genes(zdata)
@@ -464,7 +472,7 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
 
         if geneset == True:
             # # importance weight
-            sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
+            sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy', mmap_mode='r')
             sample_geneset = sample_geneset[:,setmask]
             sample_geneset = sample_geneset.astype('float32')
 

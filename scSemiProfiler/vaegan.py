@@ -767,7 +767,7 @@ class myVAE(BaseModuleClass):
 
         if to_cpu:
             exprs = exprs.cpu()
-        exprs = exprs * (exprs > bound)
+        exprs.mul_(exprs > bound)
 
         return exprs
 
@@ -1467,4 +1467,3 @@ class fastgenerator(
         )
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
-
