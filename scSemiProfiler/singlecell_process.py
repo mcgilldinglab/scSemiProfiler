@@ -55,21 +55,24 @@ def gen_tf_gene_table(genes, tf_list, dTD):
     TF_names = [g.upper() for g in tf_list]
     tf_gene_table = dict.fromkeys(tf_list)
 
+    # Position of each gene name, first occurrence wins -- same answer as
+    # gene_names.index(x) but O(1) instead of a linear scan per target.
+    gene_pos = {}
+    for i, g in enumerate(gene_names):
+        if g not in gene_pos:
+            gene_pos[g] = i
+
     for i, tf in enumerate(tf_list):
-        tf_gene_table[tf] = np.zeros(len(gene_names))
-        _genes = dTD[tf]
-
-        _existed_targets = list(set(_genes).intersection(gene_names))
-        _idx_targets = map(lambda x: gene_names.index(x), _existed_targets)
-
-        for _g in _idx_targets:
-            tf_gene_table[tf][_g] = 1
+        row = np.zeros(len(gene_names))
+        for _g in dTD[tf]:
+            idx = gene_pos.get(_g)
+            if idx is not None:
+                row[idx] = 1
+        tf_gene_table[tf] = row
 
     del gene_names
     del TF_names
-    del _genes
-    del _existed_targets
-    del _idx_targets
+    del gene_pos
 
     gc.collect()
 
@@ -176,6 +179,29 @@ def getGeneSetMatrix(_name, genes_upper, gene_sets_path):
     return gene_set_matrix, keys
 
         
+def _neighbor_sum(x: np.ndarray, neighbors: np.ndarray, budget: int = 1 << 28) -> np.ndarray:
+    """Sum ``x[neighbors]`` over the neighbor axis without building it whole.
+
+    Equivalent to ``x[neighbors, :].sum(axis=1)``. Rows are processed in blocks
+    sized to keep the gathered intermediate under ``budget`` bytes; each output
+    row still reduces its neighbors in the same order, so the result is
+    bit-identical to the unchunked expression.
+    """
+    n_cells, n_neighbors = neighbors.shape
+    per_row = max(1, n_neighbors * x.shape[1] * x.dtype.itemsize)
+    step = max(1, budget // per_row)
+    out = None
+    for start in range(0, n_cells, step):
+        stop = min(start + step, n_cells)
+        block = x[neighbors[start:stop], :].sum(axis=1)
+        if out is None:
+            out = np.empty((n_cells, x.shape[1]), dtype=block.dtype)
+        out[start:stop] = block
+    if out is None:
+        out = np.empty((0, x.shape[1]), dtype=x.dtype)
+    return out
+
+
 def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple[anndata.AnnData, np.ndarray]:
     """
     Augment an anndata object using a cell neighbor graph. 
@@ -198,56 +224,63 @@ def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple
     """
     
     
+    n_cells = adata.X.shape[0]
+
     adj = kneighbors_graph(np.array(adata.X), k, mode='connectivity', include_self=True)
     adj = adj.toarray()
-    diag = np.array(np.identity(adj.shape[0]).astype('float32'))*diagw
-    adj = adj + diag
-    adj = adj/adj.sum(axis=1)        
-    selfw = np.zeros(adj.shape[0])
-    for i in range(adj.shape[0]):
-        selfw[i] = adj[i,i]
-    selfw=selfw.astype('float32')
+    # Same arithmetic as `adj + np.identity(n)*diagw` without materialising a
+    # second n x n matrix; float32(diagw) keeps the promotion identical.
+    adj[np.diag_indices(n_cells)] += np.float32(diagw)
+    adj = adj/adj.sum(axis=1)
+    selfw = np.diag(adj).astype('float32')
     adata.obs['selfw']=selfw
     #remove self so that not in neighbors
-    for i in range(adj.shape[0]):
-        adj[i,i]=0
-        
+    np.fill_diagonal(adj, 0)
+
     adata.obsm['adj'] = adj
     adj = torch.from_numpy(adj.astype('float32'))#.type(torch.FloatTensor)
     neighboridx = np.where(adj!=0)
     xs = neighboridx[0]
     ys = neighboridx[1]
-        
+
     maxn=k
-    neighbors = np.zeros((adj.shape[0],maxn-1)) - 1
-    for i in range(len(adata.obs)):
-        ns=np.zeros(maxn-1)-1
-        flag=0
-        j=0
-        k=0
-        while flag!=2 and j<xs.shape[0]:
-            if xs[j]==i:
-                ns[k] = (ys[j])
-                k+=1
-                flag=1
-            elif flag==1:
-                flag=2
-            j+=1
-        neighbors[i] = ns
-        
-    neighbors = neighbors.astype(int)
+    # np.where returns the nonzero columns row-major and ascending within a row,
+    # which is the order the original per-row scan collected them in. Every row
+    # holds exactly maxn-1 neighbours once the diagonal is cleared, so the index
+    # list reshapes straight into the neighbour table.
+    counts = np.bincount(xs, minlength=n_cells)
+    if n_cells > 0 and counts.min() == maxn - 1 and counts.max() == maxn - 1:
+        neighbors = ys.reshape(n_cells, maxn - 1).astype(int)
+    else:
+        neighbors = np.zeros((n_cells, maxn - 1), dtype=int) - 1
+        ends = np.cumsum(counts)
+        starts = ends - counts
+        for i in range(n_cells):
+            c = counts[i]
+            if c > maxn - 1:
+                raise ValueError(
+                    'cell %d has %d neighbours but only %d slots; the cell graph '
+                    'is degenerate (duplicate cells?)' % (i, c, maxn - 1)
+                )
+            neighbors[i, :c] = ys[starts[i]:ends[i]]
+
     adata.obsm['neighbors']=neighbors
     neighborx = np.array(adata.X)
-    
+
     normchoice = 0
     if normchoice == 0:
-        neighborx = np.log(1+neighborx)*selfw[0] + np.log(1+neighborx[neighbors,:]).sum(axis=1)*(1-selfw[0])/(maxn-1)
+        # log1p once on (cells, genes) instead of once per gathered neighbour;
+        # the gather+sum is chunked so the (cells, maxn-1, genes) intermediate
+        # never has to exist in full. Per-row summation order is unchanged.
+        logx = np.log(1+neighborx)
+        agg = _neighbor_sum(logx, neighbors)
+        neighborx = logx*selfw[0] + agg*(1-selfw[0])/(maxn-1)
     else:                                       ## 2*
-        neighborx = neighborx*selfw[0] + neighborx[neighbors].sum(axis=1)*(1-selfw[0])/(maxn-1)
+        neighborx = neighborx*selfw[0] + _neighbor_sum(neighborx, neighbors)*(1-selfw[0])/(maxn-1)
         neighborx = np.log(1+neighborx)
-    
+
     adata.obsm['neighborx']=neighborx
-    
+
     return adata,adj
 
 
@@ -293,7 +326,7 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
     
     scdata = anndata.read_h5ad(singlecell)
     sids = np.unique(scdata.obs['sample_ids'])
-    
+
     # cell filtering
     if cellfilter == True:
         print('Filtering cells')
@@ -341,6 +374,10 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
     
     
     
+    # Materialise the per-cell sample labels once: every `scdata[... == sid]`
+    # below would otherwise rebuild this column from the (categorical) obs frame.
+    sample_ids = np.asarray(scdata.obs['sample_ids'])
+
     # store singlecell data, geneset score
     if (os.path.isdir(name + '/sample_sc')) == False:
         os.system('mkdir ' + name + '/sample_sc')
@@ -358,30 +395,31 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
             print('Computing human geneset scores')
         elif geneset == 'hamster':
             print('Computing hamster geneset scores')
+        # The gene set matrix depends only on var.index, which is the same for
+        # every sample, so build it once instead of re-parsing the GMT and
+        # rebuilding the pathway table inside the loop.
+        gene_sets_path = "genesets/"
+        genes = list(scdata.var.index)
+        if geneset == 'hamster':
+            genes = hamster_to_human(genes)
+        genes_upper = [g.upper() for g in genes]
+        gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
+        gene_set_matrix_T = np.array(gene_set_matrix).T
+        eps = 1e-6
+        den = (np.array(gene_set_matrix.sum(axis=1))+eps)
+
         zps=[]
         for sid in sids:
-            adata = scdata[scdata.obs['sample_ids'] == sid]
+            adata = scdata[sample_ids == sid]
             X = adata.X
 
-            gene_sets_path = "genesets/"
-            genes = list(adata.var.index)
-            
-            if geneset == 'hamster':
-                genes = hamster_to_human(genes)
-            genes_upper = [g.upper() for g in genes]
-            N = adata.X.shape[0]
-            G = len(genes_upper)
-            gene_set_matrix, keys_all = getGeneSetMatrix(prior_name, genes_upper, gene_sets_path)
-
-            zp = X.dot(np.array(gene_set_matrix).T)
-            eps = 1e-6
-            den = (np.array(gene_set_matrix.sum(axis=1))+eps)
+            zp = X.dot(gene_set_matrix_T)
             zp = (zp+eps)/den
             zp = zp - eps/den
             np.save(name + '/geneset_scores/' + sid,zp)
             zps.append(zp)
 
-        if 'hvset.npy' not in os.listdir(name):
+        if not os.path.exists(name + '/hvset.npy'):
             zps=np.concatenate(zps,axis=0)
             zdata = anndata.AnnData(zps)
             sc.pp.log1p(zdata)
@@ -392,45 +430,43 @@ def scprocess(name:str,singlecell:str, logged:bool = False, normed:bool = True, 
         # select highly variable genes (genes in preprocessed bulk data)
         hvgenes = np.load(name + '/hvgenes.npy', allow_pickle = True)
         
+        # Hash-based membership both ways: `g in np.ndarray` is a linear scan,
+        # which made the mask quadratic in the number of genes.
+        scgenes = set(scdata.var.index)
         for g in hvgenes:
-            if g not in scdata.var.index:
+            if g not in scgenes:
                 print('Error. Bulk data contains genes that are not in single-cell data. Please remove those genes from the bulk data and try again.')
                 return
-        
-        hvmask = []
-        for i in scdata.var.index:
-            if i in hvgenes:
-                hvmask.append(True)
-            else:
-                hvmask.append(False)
-        hvmask = np.array(hvmask)
+
+        hvgeneset = set(hvgenes)
+        hvmask = np.array([i in hvgeneset for i in scdata.var.index])
         scdata = scdata[:,hvmask]
         np.save(name + '/hvmask.npy',hvmask)
-    
+
 
     print('Augmenting and saving single-cell data.')
+    setmask = np.load(name + '/hvset.npy') if geneset == True else None
     for sid in sids:
-        adata = scdata[scdata.obs['sample_ids'] == sid]
-        
+        adata = scdata[sample_ids == sid].copy()
+
         # gcn
         adata.obs['cellidx']=range(len(adata.obs))
         adata,adj = fast_cellgraph(adata,k=k,diagw=1.0)
-        
-        
+
+
         if geneset == True:
             # # importance weight
             sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
-            setmask = np.load(name + '/hvset.npy')
             sample_geneset = sample_geneset[:,setmask]
             sample_geneset = sample_geneset.astype('float32')
 
             features = np.concatenate([adata.X,sample_geneset],1)
         else:
             features = adata.X
-            
+
         variances = np.var(features,axis=0)
         adata.uns['feature_var'] = variances
-        
+
         adata.write(name + '/sample_sc/' + sid + '.h5ad')
     
     print('Finished processing representative single-cell data')

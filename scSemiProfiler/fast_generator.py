@@ -243,7 +243,7 @@ class myEncoder(nn.Module):
         """
         
         b = x.shape[0]
-        if neighborx != None: # if using cell graph
+        if neighborx is not None: # if using cell graph
             neighborx = neighborx.reshape((b,-1))
             q = self.encoder(neighborx)
             
@@ -454,6 +454,10 @@ class myVAE(BaseModuleClass):
         self.power=power
         self.upperbound=upperbound
 
+        # Step-invariant loss terms, filled on first use. Plain attributes rather
+        # than buffers so state_dict() stays byte-identical to the original.
+        self._normv_cache = {}
+        self._bulk_slice = None
 
         self.px_r = torch.nn.Parameter(torch.randn(n_input))
 
@@ -514,7 +518,7 @@ class myVAE(BaseModuleClass):
     def inference(self, x, neighborx, geneset_len, n_samples=1):
         
         x_ = x
-        if neighborx != None:
+        if neighborx is not None:
             genelen = neighborx.shape[1]
         else:
             genelen = x.shape[1]
@@ -528,7 +532,7 @@ class myVAE(BaseModuleClass):
             library = torch.log(x_.sum(1)).unsqueeze(1)
         if self.log_variational:
             x_ = torch.log(1 + x_)
-            if (neighborx != None ) and (neighborx.max() > 20):
+            if (neighborx is not None) and (neighborx.max() > 20):
                 neighborx = torch.log(1 + neighborx)
             #neighborx = torch.log(1 + neighborx)
         encoder_input = x_
@@ -616,7 +620,7 @@ class myVAE(BaseModuleClass):
         
         
 
-        if (type(bulk) == type(None)):
+        if bulk is None:
             return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=kl_global)
         else:
             return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,kl_global=bulk_loss)
@@ -648,8 +652,25 @@ class myVAE(BaseModuleClass):
             )
         mask = (mdist.mean>bound)
         exprs = dist.mean  # * mask
-        
-        return exprs.cpu(), mask  
+
+        return exprs.cpu(), mask
+
+    @torch.no_grad()
+    def nb_mean(self, tensors) -> torch.Tensor:
+        """NB mean of the current generator, left on the compute device.
+
+        What the adversarial training step actually needs from ``nb_sample``: it
+        discards the mask (a second ZINB built only to threshold it) and used to
+        pull the result to the CPU just to send it straight back to the GPU.
+        """
+        _, generative_outputs = self.forward(
+            tensors,
+            inference_kwargs=dict(n_samples=1),
+            compute_loss=False,
+        )
+        return NegativeBinomial(
+            mu=generative_outputs["px_rate"], theta=generative_outputs["px_r"]
+        ).mean
 
     @torch.no_grad()
     def debugsample(
@@ -754,28 +775,50 @@ class myVAE(BaseModuleClass):
         return exprs
 
 
+    def _feature_weights(self, n_features: int) -> torch.Tensor:
+        """Per-feature weights applied to the reconstruction log-likelihood.
+
+        These depend only on ``self.variances`` and the feature count, neither of
+        which changes over the lifetime of the module, but the original rebuilt
+        them on every training step -- a concat, a full sort of the feature
+        vector and two tensor copies per minibatch. Cached here, shape (1, F) so
+        it broadcasts straight onto the loss.
+        """
+        cached = self._normv_cache.get(n_features)
+        if cached is not None:
+            return cached
+
+        variances = self.variances
+        apd = torch.ones(n_features - variances.shape[0])
+        apd = apd.to(variances.device)
+        normv = torch.cat([variances, apd], dim=0)
+
+        vs, idx = normv.sort()
+        threshold = vs[n_features // 2]
+        normv = (normv > threshold)
+        normv = 0.2 * normv + 1
+        normv = normv.reshape((1, -1))
+
+        self._normv_cache[n_features] = normv
+        return normv
+
+    def _bulk_target(self, device) -> torch.Tensor:
+        """The bulk profile trimmed to the gene block, cached across steps."""
+        cached = self._bulk_slice
+        if cached is None or cached.device != device:
+            cached = self.bulk.reshape((-1))[:-self.geneset_len].to(device)
+            self._bulk_slice = cached
+        return cached
+
     def get_reconstruction_loss(self, x, px_scale,px_rate, px_r, px_dropout, variances, bulk) -> torch.Tensor:
-        if type(variances) != type(None):
+        if variances is not None:
+            normv = self._feature_weights(x.shape[1])
 
-
-            normv = variances
-            
-            apd = torch.ones(x.shape[1] - variances.shape[0])
-            apd = apd.to(normv.device)
-            normv = torch.cat([variances,apd],dim=0)
-            
-            vs,idx=normv.sort()
-            threshold =  vs[x.shape[1]//2] #normv.mean()
-            normv = torch.tensor((normv>threshold)) 
-            normv = 0.2*normv + 1
-            normv = torch.tensor(normv)
-        
         if self.gene_likelihood == "zinb":
             reconst_loss =   ZeroInflatedNegativeBinomial(
                     mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 ).log_prob(x)
-            if variances != None:
-                normv = normv.reshape((1,-1))
+            if variances is not None:
                 reconst_loss = reconst_loss*normv
             reconst_loss = -reconst_loss.sum(dim=-1)
             
@@ -787,19 +830,17 @@ class myVAE(BaseModuleClass):
             reconst_loss = -Poisson(px_rate).log_prob(x).sum(dim=-1)
         
         
-        if type(bulk)!= type(None):
+        if bulk is not None:
             predicted_batch_mean = ZeroInflatedNegativeBinomial(
                     mu=px_rate, theta=px_r, zi_logits=px_dropout,scale=px_scale
                 ).mean
-            
-            
+
+
             predicted_batch_mean = predicted_batch_mean.mean(axis=0) # average over batch dimension
-                                                                     # shape should be (gene) now 
+                                                                     # shape should be (gene) now
             predicted_batch_mean = predicted_batch_mean.reshape((-1))[:-self.geneset_len]
-            
-            bulk = bulk.reshape((-1))[:-self.geneset_len]
-            
-            bulk = bulk.to(predicted_batch_mean.device)
+
+            bulk = self._bulk_target(predicted_batch_mean.device)
             predicted_batch_mean = predicted_batch_mean[:len(bulk)]
             
             ### expression transformation for bulk loss
@@ -1058,8 +1099,7 @@ class AdversarialTrainingPlan(TrainingPlan):
         # this condition will not be met unless self.adversarial_classifier is not False
         if opt2 is not None:
 
-            xh,__ = self.module.nb_sample(batch)
-            xh = xh.to(self.module.device)
+            xh = self.module.nb_mean(batch)
             x = batch[REGISTRY_KEYS.X_KEY]
             
             valid = torch.ones(x.size(0), 1)

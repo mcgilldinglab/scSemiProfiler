@@ -75,43 +75,59 @@ def pick_batch_eee(reduced_bulk=None,\
     
     return new_representatives,new_cluster_labels
 
+def _bulk_distances(members: np.array, ref: np.array) -> np.array:
+    """Euclidean distances from every row of ``members`` to ``ref``.
+
+    The squared terms are reduced in one batched call, then the root is taken in
+    float64. Both details matter: numpy's scalar ``**0.5`` promotes a float32 to
+    float64 while the array form stays in float32, so rooting the batch directly
+    would not reproduce the per-pair arithmetic the original used.
+    """
+    sq = ((members - ref)**2).sum(axis=1)
+    return np.sqrt(sq.astype(np.float64))
+
+
 def best_patient(cluster_labels=None,representatives=None,\
                  reduced_bulk=None,cluster_num=0,new_num=None):
     if new_num == None:
         new_num = len(representatives)
     pindices = np.where(np.array(cluster_labels)==cluster_num)[0]
     representative = representatives[cluster_num]
-    hets=[]
-    potential_new_labels = []
-    for i in range(len(pindices)):
-        potential_new_label = copy.deepcopy(cluster_labels)
-        newrepre = pindices[i]
-        het = 0
-        if newrepre in representatives:
-            hets.append(9999)
-            potential_new_labels.append(potential_new_label)
+    reduced_bulk = np.asarray(reduced_bulk)
+    members = reduced_bulk[pindices]
+    n = len(pindices)
+
+    # Distance from each cluster member to the incumbent representative. The
+    # original recomputed this inside the inner loop, i.e. once per (candidate,
+    # member) pair rather than once per member.
+    d_rep = _bulk_distances(members, reduced_bulk[representative])
+
+    repset = set(representatives)
+    hets = np.empty(n)
+    for i in range(n):
+        if pindices[i] in repset:
+            hets[i] = 9999
             continue
-        for j in range(len(pindices)):
-            brepre = reduced_bulk[representative]
-            brepre2 = reduced_bulk[newrepre]
-            bj = reduced_bulk[pindices[j]]
-            bdist1 = (brepre - bj)**2
-            bdist1 = bdist1.sum()
-            bdist1 = bdist1**0.5
-            bdist2 = (brepre2 - bj)**2
-            bdist2 = bdist2.sum()
-            bdist2 = bdist2**0.5
-            
-            if bdist1 > bdist2:
-                het = het + bdist2
-                potential_new_label[pindices[j]]=new_num
+        d_new = _bulk_distances(members, members[i])
+        het = 0
+        for j in range(n):
+            # accumulated in the original's order so the total rounds identically
+            if d_rep[j] > d_new[j]:
+                het = het + d_new[j]
             else:
-                het = het + bdist1
-        hets.append(het)
-        potential_new_labels.append(potential_new_label)
-    hets = np.array(hets)
-    bestp = pindices[np.argmin(hets)]
-    new_cluster_labels = potential_new_labels[np.argmin(hets)]
+                het = het + d_rep[j]
+        hets[i] = het
+
+    best = int(np.argmin(hets))
+    bestp = pindices[best]
+    # Only the winner's membership vector is ever used, so build it once here
+    # instead of deep-copying a candidate labelling per iteration.
+    new_cluster_labels = copy.deepcopy(cluster_labels)
+    if pindices[best] not in repset:
+        d_new = _bulk_distances(members, members[best])
+        for j in range(n):
+            if d_rep[j] > d_new[j]:
+                new_cluster_labels[pindices[j]] = new_num
     return bestp, new_cluster_labels, hets
 
 def update_membership(reduced_bulk=None,\
@@ -147,24 +163,37 @@ def compute_cluster_heterogeneity(cluster_number=0,\
     in_cluster_uncertainty = []
     cluster_labels = np.array(cluster_labels)
     cluster_patient_indices = np.where(cluster_labels==cluster_number)[0]
-    
+
+    repset = set(representatives)
+    # The searched-against matrix is the representative's cells, which do not
+    # change across the loop -- build the index once instead of per patient.
+    # Built on first use so an all-representative cluster touches nothing.
+    index = None
+
     for i in range(len(cluster_patient_indices)): # number of patients in this cluster except the representative
-        
+
         patient_index = cluster_patient_indices[i]
-        
-        if patient_index in representatives:
+
+        if patient_index in repset:
             in_cluster_uncertainty.append(0)
             continue
-            
+
         # distance between this patient and representative
-        bdist = (reduced_bulk[representative] - reduced_bulk[patient_index])**2 
+        bdist = (reduced_bulk[representative] - reduced_bulk[patient_index])**2
         bdist = bdist.sum()
         bdist = bdist**0.5
-        
+
         ma = np.array(xdim[patient_index]).copy(order='C')
-        mb = np.array(xdim[representative]).copy(order='C')
-        sdist = (faiss_knn(ma,mb,n_neighbors=1).mean())
-        
+        if index is None:
+            mb = np.ascontiguousarray(np.array(xdim[representative]))
+            index = faiss.IndexFlatL2(mb.shape[1])
+            index.add(mb)
+        weights, targets = index.search(ma, 2)
+        if -1 in targets:
+            raise ValueError('Not enough neighbors were found. Please consider '
+                             'reducing the number of neighbors.')
+        sdist = (weights[:,:1].mean())
+
 
         semiloss = np.log(1+pseudobulk[patient_index]) - np.log(1+semis[patient_index].mean(axis=0))
         semiloss = semiloss**2

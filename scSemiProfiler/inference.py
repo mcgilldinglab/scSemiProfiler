@@ -57,7 +57,7 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
     adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
     
     # load geneset
-    if 'geneset_scores' in os.listdir(name):    
+    if os.path.isdir(name + '/geneset_scores'):
         sample_geneset = np.load(name + '/geneset_scores/'+sid+'.npy')
         setmask = np.load(name + '/hvset.npy')
         sample_geneset = sample_geneset[:,setmask]
@@ -223,69 +223,30 @@ def reconst_pretrain2(name:str, sid:str ,premodel:Union[str,fastgenerator],devic
 
 
 
-def unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
-    model0 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
-                      bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight =1*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                      power=2,upperbound=99999)
-    if type(premodel)==type('string'):
-        model0.module.load_state_dict(torch.load(premodel))
-    else:
-        model0.module.load_state_dict(premodel.module.state_dict())
-    model0.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model0.module.state_dict(), name+'/tmp/model0')
-    return model0.history
+# Bulk-loss weight ramp across the inference mini-stages. The original spelled
+# this out as six near-identical unisemi0..unisemi5 functions that differed only
+# in this constant and in which /tmp file they round-tripped through.
+_MINISTAGE_BULKWEIGHTS = [1*8, 4*8, 16*8, 64*8, 128*8]
 
 
-def unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
-    model1 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
-                      bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 4*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound)
-    model1.module.load_state_dict(torch.load(name+'/tmp/model0'))
-    model1.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model1.module.state_dict(), name+'/tmp/model1')
-    return model1.history
+def _run_ministage(name, adata, variances, geneset_len, bulk, batch_size, upperbound,
+                   countbulkweight, init_state, stage, device='cuda:0', lr=2e-4, epochs=150):
+    """Train one inference mini-stage, warm-started from ``init_state``.
 
-def unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
-    model2 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
-                      bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 16*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound)
-    model2.module.load_state_dict(torch.load(name+'/tmp/model1'))
-    model2.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model2.module.state_dict(), name+'/tmp/model2')
-    return model2.history
-
-def unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
-    model3 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
-                      bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 64*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound)
-    model3.module.load_state_dict(torch.load(name+'/tmp/model2'))
-    model3.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model3.module.state_dict(), name+'/tmp/model3')
-    return model3.history
-
-def unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
-    model4 = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
-                      bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 128*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
-                     power=2,upperbound=upperbound)
-    model4.module.load_state_dict(torch.load(name+'/tmp/model3'))
-    model4.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model4.module.state_dict(), name+'/tmp/model4')
-    return model4.history
-
-def unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbound,reprepid,tgtpid,premodel,device='cuda:5',k=15,diagw=1.0,lr = 2e-4,epochs=150):
+    ``init_state`` is a state dict handed straight over from the previous stage
+    instead of being written to and re-read from ``name/tmp``; the checkpoint is
+    still written so the on-disk result is unchanged. Returns the training
+    history plus the state dict the next stage should start from.
+    """
     model = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                       bulk=bulk,n_hidden=256,n_latent=32,\
-                     dropout_rate=0,countbulkweight = 512*8,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
+                     dropout_rate=0,countbulkweight = countbulkweight,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbound)
-    model.module.load_state_dict(torch.load(name+'/tmp/model4'))
+    model.module.load_state_dict(init_state)
     model.train(max_epochs=epochs, plan_kwargs={'lr':lr,'lr2':1e-10,'kappa':4040*1e-10},use_gpu=device,batch_size=batch_size)
-    torch.save(model.module.state_dict(), name+'/tmp/model')
-    return model.history
+    state = model.module.state_dict()
+    torch.save(state, name+'/tmp/model'+str(stage))
+    return model.history, state
 
 def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str],device:str='cuda:0',k:int=15,diagw:float=1.0,bulktype='pseudobulk',pseudocount=0.1,lr = 2e-4,epochs=150,ministages = 5) -> Tuple[ dict, np.array, fastgenerator]:
     """
@@ -381,65 +342,39 @@ def fast_semi(name:str,reprepid:int,tgtpid:int,premodel:Union[fastgenerator,str]
     fastgenerator.setup_anndata(adata)
 
     
-    hist = unisemi0(name,adata,adj,variances,geneset_len,bulk,batch_size,reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
-    histdic={}
-    histdic['total0'] = hist['train_loss_epoch']
-    histdic['bulk0'] = hist['kl_global_train']
-    #del premodel
-    gc.collect()
-    torch.cuda.empty_cache() 
-    #import time
-    #time.sleep(10)
-    
-    
-    hist = unisemi1(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[0],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
+    # Stage 0 starts from the pretrained representative model, later stages from
+    # whatever the previous one produced; the upper bound tightens each stage.
+    if type(premodel) == type('string'):
+        state = torch.load(premodel)
+    else:
+        state = premodel.module.state_dict()
 
-    histdic['total1'] = hist['train_loss_epoch']
-    histdic['bulk1'] = hist['kl_global_train']
-    #del model0
-    gc.collect()
-    torch.cuda.empty_cache() 
-    hist = unisemi2(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[1],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
-
-    histdic['total2'] = hist['train_loss_epoch']
-    histdic['bulk2'] = hist['kl_global_train']
-    #del model1
-    gc.collect()
-
-    #time.sleep(10)
-    torch.cuda.empty_cache() 
-    
-    if ministages>3:
-        hist = unisemi3(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[2],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
-
-        histdic['total3'] = hist['train_loss_epoch']
-        histdic['bulk3'] = hist['kl_global_train']
-    
-    
-    #del model2
-    gc.collect()
-    torch.cuda.empty_cache() 
-    #time.sleep(10)
-    if ministages >4:
-        hist = unisemi4(name,adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[3],reprepid,tgtpid,premodel,device=device,k=k,diagw=1.0,lr=lr,epochs=epochs)
-
-        histdic['total4'] = hist['train_loss_epoch']
-        histdic['bulk4'] = hist['kl_global_train']
-    
-    #del model3
-    gc.collect()
-    torch.cuda.empty_cache() 
-    #time.sleep(10)
-    #hist = unisemi5(adata,adj,variances,geneset_len,bulk,batch_size,upperbounds[4],reprepid,tgtpid,premodel,device=device,k=15,diagw=1.0)
-    #histdic['total'] = hist['train_loss_epoch']
-    #histdic['bulk'] = hist['kl_global_train']
-
+    # The first three mini-stages always run; stages 3 and 4 are gated on
+    # `ministages`, and the model carried into inference is the one that stage
+    # ministages-1 produced. Same schedule the unrolled version had.
+    n_stages = max(3, min(ministages, len(_MINISTAGE_BULKWEIGHTS)))
+    histdic = {}
+    final_state = None
+    for stage in range(n_stages):
+        upperbound = 99999 if stage == 0 else upperbounds[stage-1]
+        hist, state = _run_ministage(
+            name, adata, variances, geneset_len, bulk, batch_size, upperbound,
+            _MINISTAGE_BULKWEIGHTS[stage], state, stage,
+            device=device, lr=lr, epochs=epochs)
+        histdic['total'+str(stage)] = hist['train_loss_epoch']
+        histdic['bulk'+str(stage)] = hist['kl_global_train']
+        if stage == ministages - 1:
+            final_state = state
+        gc.collect()
+        torch.cuda.empty_cache()
+    if final_state is None:
+        final_state = state
 
     model = fastgenerator(adata=adata,variances=variances,geneset_len=geneset_len,\
                      bulk=bulk,n_hidden=256,n_latent=32,\
                      dropout_rate=0,countbulkweight = 512,logbulkweight=0,absbulkweight=0,abslogbulkweight=0,corrbulkweight=0,\
                      power=2,upperbound=upperbounds[3])
-    model.module.load_state_dict(torch.load(name+'/tmp/model'+str(ministages-1)))
+    model.module.load_state_dict(final_state)
 
     # inference
     xsemi = []
@@ -581,7 +516,7 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
     # if exists, load model
     modelfile = 'fast_reconst1_' + rp
     path = name + '/models/fast_reconst1_' + rp
-    if modelfile in os.listdir(name + '/models'):
+    if os.path.exists(path):
         print('load existing pretrain 1 reconstruction model for ' + rp)
         adata,adj,variances,bulk,geneset_len = setdata(name,rp,device,k,diagw)
         model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
@@ -597,7 +532,7 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
     print('pretrain2: reconstruction with representative bulk loss')
     modelfile = 'fastreconst2_' + rp
     path = name + '/models/fastreconst2_' + rp 
-    if modelfile in os.listdir(name + '/models'):
+    if os.path.exists(path):
         print('load existing pretrain 2 model for ' + rp)
         adata,adj,variances,bulk,geneset_len = setdata(name,rp,device,k,diagw)
         model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
@@ -609,7 +544,7 @@ def tgtinfer(name:str, representative:Union[str,int],target:Union[str,int],bulkt
     
 
     fname = rp + '_to_' + tgt + '.npy'
-    if fname in os.listdir(name+'/inferreddata/'):
+    if os.path.exists(name + '/inferreddata/' + fname):
         print('Inference for '+tgt+' has been finished previously. Skip.')
 
     premodel = repremodels2
@@ -746,7 +681,7 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
         # if exists, load model
         modelfile = 'fast_reconst1_' + sid
         path = name + '/models/fast_reconst1_'+sid
-        if modelfile in os.listdir(name + '/models'):
+        if os.path.exists(path):
             print('load existing pretrain 1 reconstruction model for '+sid)
             adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
             model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
@@ -780,7 +715,7 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
         print('load existing model')
         modelfile = 'fastreconst2_' + sid
         path = name + '/models/fastreconst2_' + sid 
-        if modelfile in os.listdir(name + '/models'):
+        if os.path.exists(path):
             print('load existing pretrain 2 model for ' + sid)
             adata,adj,variances,bulk,geneset_len = setdata(name,sid,device,k,diagw)
             model = fastgenerator(variances,None,geneset_len,adata,n_hidden=256,n_latent=32,dropout_rate=0)
@@ -811,7 +746,7 @@ def scinfer(name:str, representatives:str,cluster:str,bulktype:str='pseudobulk',
             reprepid = repres[cluster_labels[i]]
 
             fname = sids[reprepid]+'_to_'+sids[tgtpid]+'.npy'
-            if fname in os.listdir(name+'/inferreddata/'):
+            if os.path.exists(name + '/inferreddata/' + fname):
                 print('Inference for '+sids[i]+' has been finished previously. Skip.')
                 continue
 

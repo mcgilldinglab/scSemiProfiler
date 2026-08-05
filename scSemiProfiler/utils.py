@@ -95,23 +95,23 @@ def get_cohort_sc(name:str, path:str, cohort_name:str, representative_ids:list) 
     f.close()
     
     rsids = representative_ids
-    rmask=[]    
-    for i in range(len(scdata.obs.index)):
-        sid = scdata.obs['sample_ids'][i]
-        if sid in rsids:
-            rmask.append(True)
-        else:
-            rmask.append(False)
-    rmask = np.array(rmask)
-    
+    # vectorised membership test; the per-cell python loop indexed the obs frame
+    # once per cell and scanned rsids linearly
+    rmask = scdata.obs['sample_ids'].isin(rsids).values
+
     repredata = scdata[rmask,:]
-    
+
     X = repredata.X
     if X.max() < 20:
         if scipy.sparse.issparse(X):
-            X = np.array(X.todense())
-        X = np.exp(X) - 1
-        X = sparse.csr_matrix(X)
+            # exp(0)-1 == 0, so transforming the stored values keeps the same
+            # sparsity pattern without densifying the matrix
+            X = X.tocsr(copy=True)
+            X.data = np.exp(X.data) - 1
+            X.eliminate_zeros()
+        else:
+            X = np.exp(X) - 1
+            X = sparse.csr_matrix(X)
     adata = anndata.AnnData(X)
     adata.obs = repredata.obs
     adata.var = repredata.var
@@ -517,48 +517,48 @@ def assemble_cohort(name:str,
         sampleinfo[k] = []
     
     # read expression data
-    
+    # the bulk file was re-read from disk on every loop iteration
+    bulkdata = anndata.read_h5ad(bulkpath)
+    repset = set(representatives)
+
     for i in range(len(sids)):
-        if i in representatives:
+        if i in repset:
             sid = sids[i]
             adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
-            
+
             # expression
             X.append(np.array(adata.X))
-            
+
             # essential keys
             semicelltype = semicelltype + list(adata.obs[celltype_key])
             #semiids = semiids + list(adata.obs['sample_ids'])
-            for j in range(adata.X.shape[0]):
-                semiids.append(sids[i])
-                source.append('Representative')
-                
+            ncells = adata.X.shape[0]
+            semiids.extend([sids[i]] * ncells)
+            source.extend(['Representative'] * ncells)
+
             ## other keys
-            bulkdata = anndata.read_h5ad(bulkpath)
             for k in sample_info_keys:
-                for j in range(adata.X.shape[0]):
-                    sampleinfo[k].append(bulkdata.obs[k][i])
-                    
+                sampleinfo[k].extend([bulkdata.obs[k][i]] * ncells)
+
         else: # inferred target sample
             # expression
             x = np.load(name + '/inferreddata/' + \
                         sids[representatives[cluster_labels[i]]] + \
                         '_to_' + sids[i] + '.npy')
             X.append(np.array(x))
-            
+
             # essential keys
             predicted_celltype = annotator.predict(np.log1p(x))
             semicelltype = semicelltype + list(predicted_celltype)
-            for j in range(x.shape[0]):
-                semiids.append(sids[i])
-                source.append('Inferred')
-                
+            ncells = x.shape[0]
+            semiids.extend([sids[i]] * ncells)
+            source.extend(['Inferred'] * ncells)
+
             ## other keys
-            bulkdata = anndata.read_h5ad(bulkpath)
             for k in sample_info_keys:
-                for j in range(x.shape[0]):
-                    sampleinfo[k].append(bulkdata.obs[k][i])
-                    
+                sampleinfo[k].extend([bulkdata.obs[k][i]] * ncells)
+
+
     semidata = anndata.AnnData(np.array(np.concatenate(X)))
     semidata.obs['source'] = source
     semidata.obs[celltype_key] = semicelltype
@@ -1175,6 +1175,26 @@ def celltype_signature_comparison(gtdata:anndata.AnnData,semisdata:anndata.AnnDa
 
 
 ### statistics utils and rrho
+_FAC_CACHE = {}
+
+
+def _fac(x):
+    """``mpmath.fac`` memoised on (value, working precision).
+
+    The RRHO loops evaluate the same handful of factorials -- the population
+    size, the two list lengths, the overlap -- once per (rank1, rank2, i) triple,
+    and at 200 decimal digits each one is expensive. mpmath is deterministic at a
+    fixed precision, so the cached value is the same object the call would have
+    produced.
+    """
+    key = (mp.prec, x)
+    hit = _FAC_CACHE.get(key)
+    if hit is None:
+        hit = fac(x)
+        _FAC_CACHE[key] = hit
+    return hit
+
+
 def comb(a:int,b:int) -> mp.mpf:
     """
     Combination number
@@ -1198,7 +1218,7 @@ def comb(a:int,b:int) -> mp.mpf:
     
     a=mp.mpf(a)
     b=mp.mpf(b)
-    cab = fac(a)/fac(a-b)/fac(b)
+    cab = _fac(a)/_fac(a-b)/_fac(b)
     return cab
 
 def hyperp(N:int,n1:int,n2:int,k:int) -> mp.mpf:
@@ -1266,6 +1286,35 @@ def hypert(N:int,n1:int,n2:int,k:int) -> mp.mpf:
        # print()
     return (1-cdf)
 
+def _rrho_matrix(lista:list, listb:list, max_rank:int, population:int, upper:float) -> np.array:
+    """One RRHO quadrant: -log10 hypergeometric p-value for every rank cutoff pair.
+
+    The original repeated this block four times. Two things are hoisted out of
+    the inner loop: the ``set(lista[:rank1])`` rebuild, which only depends on
+    rank1, and the ``union`` array, which is only read by the NaN diagnostic
+    print and so is now computed only when that fires.
+    """
+    matrix = np.zeros((max_rank, max_rank))
+    for rank1 in range(1, max_rank + 1):
+        top_genes1 = set(lista[:rank1])
+        for rank2 in range(1, max_rank + 1):
+            # Get the top genes up to the cutoff ranks
+            top_genes2 = set(listb[:rank2])
+            # Calculate the overlap between the two gene sets
+            overlap = len(top_genes1.intersection(top_genes2))
+            # Calculate the hypergeometric p-value for the overlap
+            p_value = hypert(population,rank1,rank2,overlap)
+            p_value = float(p_value)
+            if p_value < upper:
+                p_value = upper
+            if np.isnan(p_value):
+                union = np.unique(list(top_genes1) + list(top_genes2))
+                print(overlap, len(union), rank1, rank2)
+            # Store the negative logarithm of the p-value in the RRHO matrix
+            matrix[rank1 - 1, rank2 - 1] = -np.log10(p_value)
+    return matrix
+
+
 def rrho_plot(name:str, list1:list, list2:list, list3:list, list4:list, celltype:str, population:int ,upperbound:int=50, save = None) -> Tuple[np.array,np.array,np.array,np.array]:
     """
     Generates data for RRHO graph used to compare the positive and negative markers found using real-profiled and semi-profiled datasets.
@@ -1315,92 +1364,13 @@ def rrho_plot(name:str, list1:list, list2:list, list3:list, list4:list, celltype
     max_rank3 = max(n1, n2)
     max_rank4 = max(n1, n4)
 
-    # Initialize the RRHO plot matrix
-    rrho_matrix1 = np.zeros((max_rank1, max_rank1))
-    rrho_matrix2 = np.zeros((max_rank2, max_rank2))
-    rrho_matrix3 = np.zeros((max_rank3, max_rank3))
-    rrho_matrix4 = np.zeros((max_rank4, max_rank4))
-    
     # Iterate over different cutoff ranks
     upper=1e-50
-    ## ax1 
-    for rank1 in range(1, max_rank1 + 1):
-        for rank2 in range(1, max_rank1 + 1):
-            # Get the top genes up to the cutoff ranks
-            top_genes1 = set(list1[:rank1])
-            top_genes2 = set(list4[:rank2])
-            union = np.unique(list(top_genes1) + list(top_genes2))
-            # Calculate the overlap between the two gene sets
-            overlap = len(top_genes1.intersection(top_genes2))
-            # Calculate the hypergeometric p-value for the overlap
-            p_value = hypert(population,rank1,rank2,overlap)#1 - scipy.stats.hypergeom.cdf(overlap, 6000, rank1, rank2)
-            #print(p_value)
-            p_value = float(p_value)
-            if p_value < upper:
-                p_value = upper
-            if np.isnan(p_value):
-                print(overlap, len(union), rank1, rank2)
-            # Store the negative logarithm of the p-value in the RRHO matrix
-            rrho_matrix1[rank1 - 1, rank2 - 1] = -np.log10(p_value)
-    #ax2
-    for rank1 in range(1, max_rank2 + 1):
-        for rank2 in range(1, max_rank2 + 1):
-            # Get the top genes up to the cutoff ranks
-            top_genes1 = set(list1[:rank1])
-            top_genes2 = set(list2[:rank2])
-            union = np.unique(list(top_genes1) + list(top_genes2))
-            # Calculate the overlap between the two gene sets
-            overlap = len(top_genes1.intersection(top_genes2))
-            # Calculate the hypergeometric p-value for the overlap
-            p_value = hypert(population,rank1,rank2,overlap)#1 - scipy.stats.hypergeom.cdf(overlap, 6000, rank1, rank2)
-            #print(p_value)
-            p_value = float(p_value)
-            if p_value < upper:
-                p_value = upper
-            if np.isnan(p_value):
-                print(overlap, len(union), rank1, rank2)
-            # Store the negative logarithm of the p-value in the RRHO matrix
-            rrho_matrix2[rank1 - 1, rank2 - 1] = -np.log10(p_value)
-            
-    for rank1 in range(1, max_rank3 + 1):
-        for rank2 in range(1, max_rank3 + 1):
-            # Get the top genes up to the cutoff ranks
-            top_genes1 = set(list3[:rank1])
-            top_genes2 = set(list4[:rank2])
-            union = np.unique(list(top_genes1) + list(top_genes2))
-            # Calculate the overlap between the two gene sets
-            overlap = len(top_genes1.intersection(top_genes2))
-            # Calculate the hypergeometric p-value for the overlap
-            p_value = hypert(population,rank1,rank2,overlap)#1 - scipy.stats.hypergeom.cdf(overlap, 6000, rank1, rank2)
-            #print(p_value)
-            p_value = float(p_value)
-            if p_value < upper:
-                p_value = upper
-            if np.isnan(p_value):
-                print(overlap, len(union), rank1, rank2)
-            # Store the negative logarithm of the p-value in the RRHO matrix
-            rrho_matrix3[rank1 - 1, rank2 - 1] = -np.log10(p_value)
-            
-    for rank1 in range(1, max_rank4 + 1):
-        for rank2 in range(1, max_rank4 + 1):
-            # Get the top genes up to the cutoff ranks
-            top_genes1 = set(list3[:rank1])
-            top_genes2 = set(list2[:rank2])
-            union = np.unique(list(top_genes1) + list(top_genes2))
-            # Calculate the overlap between the two gene sets
-            overlap = len(top_genes1.intersection(top_genes2))
-            # Calculate the hypergeometric p-value for the overlap
-            p_value = hypert(population,rank1,rank2,overlap)#1 - scipy.stats.hypergeom.cdf(overlap, 6000, rank1, rank2)
-            #print(p_value)
-            p_value = float(p_value)
-            if p_value < upper:
-                p_value = upper
-            if np.isnan(p_value):
-                print(overlap, len(union), rank1, rank2)
-            # Store the negative logarithm of the p-value in the RRHO matrix
-            rrho_matrix4[rank1 - 1, rank2 - 1] = -np.log10(p_value)
-            
-            
+    rrho_matrix1 = _rrho_matrix(list1, list4, max_rank1, population, upper)
+    rrho_matrix2 = _rrho_matrix(list1, list2, max_rank2, population, upper)
+    rrho_matrix3 = _rrho_matrix(list3, list4, max_rank3, population, upper)
+    rrho_matrix4 = _rrho_matrix(list3, list2, max_rank4, population, upper)
+
     fig, axs = plt.subplots(2, 2,figsize=(6,6))
     cmap = 'magma'
     

@@ -55,21 +55,22 @@ def get_eg_representatives(name:str) -> None:
         sid = sids[r]
         rsids.append(sid)
     
-    rmask=[]    
-    for i in range(len(scdata.obs.index)):
-        sid = scdata.obs['sample_ids'][i]
-        if sid in rsids:
-            rmask.append(True)
-        else:
-            rmask.append(False)
-    rmask = np.array(rmask)
-    
+    # vectorised membership test; the per-cell python loop indexed the obs frame
+    # once per cell and scanned rsids linearly
+    rmask = scdata.obs['sample_ids'].isin(rsids).values
+
     repredata = scdata[rmask,:]
-    
+
     X = repredata.X
-    X = np.array(X.todense())
-    X = np.exp(X) - 1
-    X = sparse.csr_matrix(X)
+    if sparse.issparse(X):
+        # exp(0)-1 == 0, so the zero structure is untouched: transform the stored
+        # values in place rather than densifying the whole matrix and back.
+        X = X.tocsr(copy=True)
+        X.data = np.exp(X.data) - 1
+        X.eliminate_zeros()
+    else:
+        X = np.exp(np.asarray(X)) - 1
+        X = sparse.csr_matrix(X)
     adata = anndata.AnnData(X)
     adata.obs = repredata.obs
     adata.var = repredata.var
