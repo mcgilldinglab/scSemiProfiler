@@ -56,7 +56,9 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
         Length of the gene set score features
     """
     
-    adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
+    adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
+    if 'adj' in adata.obsm:
+        del adata.obsm['adj']
     
     # load geneset
     if 'geneset_scores' in os.listdir(name):    
@@ -75,9 +77,8 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
     else:
         geneset_len = 0
     
-    # adj for cell graph
-    adj = adata.obsm['adj']
-    adj = torch.from_numpy(adj.astype('float32'))
+    # Legacy placeholder; the model consumes obsm['neighborx'] instead.
+    adj = None
     
     # variances
     variances = torch.tensor(adata.uns['feature_var'])

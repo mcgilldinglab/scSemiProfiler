@@ -45,7 +45,8 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
     adata
         The augmented anndata object. 
     adj
-        The adjacency matrix of the cell neighbor graph.
+        Legacy placeholder. The model consumes ``obsm['neighborx']`` rather than
+        the adjacency matrix, so this value is always ``None``.
     variances
         Variances of the features
     pseudobulk
@@ -54,7 +55,11 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
         Length of the gene set score features
     """
     
-    adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad') 
+    adata = anndata.read_h5ad(name + '/sample_sc/' + sid + '.h5ad')
+    # Older processed projects may still contain the unused dense adjacency.
+    # Drop it before copying obsm below so it does not double peak memory.
+    if 'adj' in adata.obsm:
+        del adata.obsm['adj']
     
     # load geneset
     if os.path.isdir(name + '/geneset_scores'):
@@ -73,9 +78,7 @@ def setdata(name:str,sid:str,device:str='cuda:0',k:int=15,diagw:float=1.0)  -> T
     else:
         geneset_len = 0
     
-    # adj for cell graph
-    adj = adata.obsm['adj']
-    adj = torch.from_numpy(adj.astype('float32'))
+    adj = None
     
     # variances
     variances = torch.tensor(adata.uns['feature_var'])

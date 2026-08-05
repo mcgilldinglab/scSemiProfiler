@@ -90,7 +90,7 @@ done
 
 banner "result"
 if [ "$fail" -eq 0 ]; then
-    echo "PASS: refactored tree reproduces baseline output exactly"
+    echo "PASS: outputs match exactly except the removed dense obsm['adj']"
 else
     echo "FAIL: differences found (see above)"
 fi

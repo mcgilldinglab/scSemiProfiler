@@ -32,6 +32,15 @@ def timed(key, fn):
     return val
 
 
+def dense_adj(adata, adj):
+    """Read the logical adjacency from either implementation."""
+    if 'adj' in adata.obsm:
+        return np.asarray(adata.obsm['adj'])
+    if hasattr(adj, 'toarray'):
+        return adj.toarray()
+    return np.asarray(adj)
+
+
 # ---- fast_cellgraph on a bigger, denser sample than the example provides ----
 rng = np.random.default_rng(7)
 X = (rng.random((1200, 300), dtype=np.float32) * 40).astype(np.float32)
@@ -39,7 +48,7 @@ X[X < 20] = 0.0
 ad = anndata.AnnData(X.copy())
 ad.obs['cellidx'] = range(ad.shape[0])
 ad2, adj = timed('fast_cellgraph', lambda: fast_cellgraph(ad, k=15, diagw=1.0))
-res['cg_adj'] = np.asarray(ad2.obsm['adj'])
+res['cg_adj'] = dense_adj(ad2, adj)
 res['cg_neighbors'] = np.asarray(ad2.obsm['neighbors'])
 res['cg_neighborx'] = np.asarray(ad2.obsm['neighborx'])
 res['cg_selfw'] = np.asarray(ad2.obs['selfw'].values)
@@ -47,8 +56,8 @@ res['cg_selfw'] = np.asarray(ad2.obs['selfw'].values)
 # k where the graph is small relative to the data, and a non-unit diag weight
 ad3 = anndata.AnnData(X[:200].copy())
 ad3.obs['cellidx'] = range(200)
-ad4, _ = fast_cellgraph(ad3, k=5, diagw=0.3)
-res['cg2_adj'] = np.asarray(ad4.obsm['adj'])
+ad4, adj4 = fast_cellgraph(ad3, k=5, diagw=0.3)
+res['cg2_adj'] = dense_adj(ad4, adj4)
 res['cg2_neighbors'] = np.asarray(ad4.obsm['neighbors'])
 res['cg2_neighborx'] = np.asarray(ad4.obsm['neighborx'])
 

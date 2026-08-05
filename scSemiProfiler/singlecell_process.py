@@ -202,7 +202,7 @@ def _neighbor_sum(x: np.ndarray, neighbors: np.ndarray, budget: int = 1 << 28) -
     return out
 
 
-def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple[anndata.AnnData, np.ndarray]:
+def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple[anndata.AnnData, scipy.sparse.csr_matrix]:
     """
     Augment an anndata object using a cell neighbor graph. 
 
@@ -220,28 +220,29 @@ def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple
     adata
         The augmented anndata object. 
     adj
-        The adjacency matrix of the cell neighbor graph.
+        The normalized cell-neighbor adjacency as a CSR sparse matrix. It is
+        returned for callers that need it, but is not persisted in ``adata``.
     """
     
     
     n_cells = adata.X.shape[0]
 
-    adj = kneighbors_graph(np.array(adata.X), k, mode='connectivity', include_self=True)
-    adj = adj.toarray()
-    # Same arithmetic as `adj + np.identity(n)*diagw` without materialising a
-    # second n x n matrix; float32(diagw) keeps the promotion identical.
-    adj[np.diag_indices(n_cells)] += np.float32(diagw)
-    adj = adj/adj.sum(axis=1)
-    selfw = np.diag(adj).astype('float32')
-    adata.obs['selfw']=selfw
-    #remove self so that not in neighbors
-    np.fill_diagonal(adj, 0)
+    graph = kneighbors_graph(np.asarray(adata.X), k, mode='connectivity', include_self=True).tocsr()
+    graph.sort_indices()
 
-    adata.obsm['adj'] = adj
-    adj = torch.from_numpy(adj.astype('float32'))#.type(torch.FloatTensor)
-    neighboridx = np.where(adj!=0)
-    xs = neighboridx[0]
-    ys = neighboridx[1]
+    # Preserve the dense implementation's arithmetic while keeping the graph
+    # O(cells * k). The connectivity graph contains the self edge already;
+    # diagw is the extra diagonal weight added before row normalization.
+    diagw32 = np.float32(diagw)
+    row_sums = np.asarray(graph.sum(axis=1)).reshape(-1) + diagw32
+    selfw = ((graph.diagonal() + diagw32) / row_sums).astype('float32')
+    adata.obs['selfw']=selfw
+
+    row_counts = np.diff(graph.indptr)
+    graph_rows = np.repeat(np.arange(n_cells), row_counts)
+    nonself = graph.indices != graph_rows
+    xs = graph_rows[nonself]
+    ys = graph.indices[nonself]
 
     maxn=k
     # np.where returns the nonzero columns row-major and ascending within a row,
@@ -280,6 +281,13 @@ def fast_cellgraph(adata: anndata.AnnData,k: int = 15,diagw: float=1.0) -> Tuple
         neighborx = np.log(1+neighborx)
 
     adata.obsm['neighborx']=neighborx
+
+    # Keep the legacy return value available without writing an unconsumed dense
+    # cells-by-cells array into every sample_sc h5ad.
+    adj = graph.multiply((1.0 / row_sums)[:, None]).tocsr()
+    adj.setdiag(0)
+    adj.eliminate_zeros()
+    adj.sort_indices()
 
     return adata,adj
 

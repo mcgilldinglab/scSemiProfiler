@@ -1,12 +1,13 @@
 # scSemiProfiler performance refactor
 
-Baseline: upstream `c2aea02`. Every change below is value-preserving — no
-algorithm swapped, no tolerance loosened, no epoch count touched — so `git diff`
-against the branch point is exactly the refactor.
+Baseline: upstream `c2aea02`. Every numerical change below is value-preserving —
+no algorithm swapped, no tolerance loosened, no epoch count touched. The sparse
+cell-graph follow-up deliberately removes one unused output field,
+`sample_sc/*.h5ad:obsm['adj']`; all remaining values stay exact.
 
-**The constraint was that output must not change.** The A/B suite compares every
-produced file element-by-element, including model checkpoints and
-training-history pickles.
+The A/B suite compares every remaining output element-by-element, including model
+checkpoints and training-history pickles, and permits only the declared removal of
+the dense adjacency field.
 
 ## Environment
 
@@ -26,9 +27,10 @@ equivalence/run_equivalence.sh
 ```
 
 Runs the pipeline twice from identical seeds — once from a pristine worktree of
-the branch point, once from this tree — and diffs every output. Exits non-zero
-on any difference. `SCSEMI_PYTHON`, `SCSEMI_BASELINE` and `SCSEMI_DEVICE`
-override the interpreter, the baseline checkout and the torch device.
+the branch point, once from this tree — and diffs every output other than the
+declared `obsm['adj']` deletion. Exits non-zero on any other difference.
+`SCSEMI_PYTHON`, `SCSEMI_BASELINE` and `SCSEMI_DEVICE` override the interpreter,
+the baseline checkout and the torch device.
 
 `equivalence/bench_step.py` is the interleaved training-loop benchmark used for
 the training rows in the table.
@@ -52,6 +54,25 @@ RTX 4090, torch 2.1.2+cu121, scvi-tools 1.0.4.
 
 The preprocessing and selection wins grow with cohort size — several of the
 fixes below were quadratic or worse in cells or samples.
+
+### Sparse cell-graph follow-up
+
+The follow-up A/B run compared this complete branch with upstream `c2aea02`; it
+is not an isolated measurement of the adjacency change alone. On the shared test
+host, `scprocess` was 219.788 s versus 11.213 s and fast `scinfer` was 167.678 s
+versus 92.905 s. The 1,200-cell logical-adjacency probe was 2.929 s versus 0.468 s.
+
+The persistent-size reduction is attributable exactly to the removed uncompressed
+float64 adjacency datasets:
+
+| Representative | Cells | Baseline h5ad | Sparse h5ad | Removed |
+|---|---:|---:|---:|---:|
+| `BGCV09_CV0279` | 2,720 | 191,395,928 B | 132,208,360 B | 59,187,568 B |
+| `MH9143426` | 7,953 | 891,521,519 B | 385,519,479 B | 506,002,040 B |
+
+The full suite passed 19 unit arrays and compared 12 process, 55 inference, and
+57 selection files. The only structural difference was the declared removal of
+`obsm['adj']` from the two representative h5ads; every remaining value matched.
 
 ### On the training numbers
 
@@ -176,9 +197,9 @@ training steps.
   does `from .vaegan import *`, so `vaegan.py` is the live model. The same
   optimisations were applied to `fast_generator.py` to keep the two in sync, but
   they do not affect the pipeline.
-- `obsm['adj']` — the dense cells×cells adjacency written into every
-  `sample_sc/*.h5ad` — is never read by anything downstream. It is kept because
-  it is part of the output, but it is the binding memory constraint for large
-  samples (n² float64) and is the obvious next thing to drop if you are willing
-  to accept a changed file.
+- `obsm['adj']` was loaded and converted by `setdata`, but the returned tensor was
+  never consumed by the model; `neighborx` is the registered model input. The
+  sparse follow-up removes this dead field, stops the loader conversion, and keeps
+  the KNN graph in CSR form throughout `fast_cellgraph`. This changes the h5ad
+  structure while preserving the logical adjacency returned by `fast_cellgraph`.
 - `scinfer` still writes `pretrain1time.txt` into the current working directory.

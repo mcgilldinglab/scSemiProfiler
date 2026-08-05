@@ -17,6 +17,7 @@ IGNORE = {'_timings.json'}
 a_root, b_root = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 problems = []
 checked = 0
+removed_dense_adj = []
 
 
 def rel_files(root):
@@ -74,9 +75,13 @@ def cmp_h5ad(pa, pb, rel):
         problems.append('%s: X %s' % (rel, msg))
     cmp_frames(A.obs, B.obs, 'obs', rel)
     cmp_frames(A.var, B.var, 'var', rel)
-    if set(A.obsm.keys()) != set(B.obsm.keys()):
+    a_obsm, b_obsm = set(A.obsm.keys()), set(B.obsm.keys())
+    missing_new, extra_new = a_obsm - b_obsm, b_obsm - a_obsm
+    if missing_new == {'adj'} and not extra_new:
+        removed_dense_adj.append(rel)
+    elif missing_new or extra_new:
         problems.append('%s: obsm keys %s vs %s' % (rel, sorted(A.obsm), sorted(B.obsm)))
-    for k in set(A.obsm) & set(B.obsm):
+    for k in a_obsm & b_obsm:
         ok, msg = arrays_equal(A.obsm[k], B.obsm[k])
         if not ok:
             problems.append('%s: obsm[%s] %s' % (rel, k, msg))
@@ -159,9 +164,11 @@ for rel in sorted(fa & fb):
         problems.append('%s: comparison failed: %r' % (rel, exc))
 
 print('compared %d files' % checked)
+if removed_dense_adj:
+    print("expected change: removed obsm['adj'] from %d h5ad files" % len(removed_dense_adj))
 if problems:
     print('MISMATCH (%d)' % len(problems))
     for p in problems:
         print('  -', p)
     sys.exit(1)
-print('ALL OUTPUTS IDENTICAL')
+print("ALL OUTPUTS IDENTICAL EXCEPT REMOVED obsm['adj']")
